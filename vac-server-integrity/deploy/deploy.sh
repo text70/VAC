@@ -20,16 +20,18 @@ if [ ! -d "$INSTALL_DIR" ]; then
     git clone $REPO_URL $INSTALL_DIR
 fi
 
-# Find the actual project root (it might be in a subdir)
+echo "--- Directory contents after clone ---"
+ls -la $INSTALL_DIR
 cd $INSTALL_DIR
-PROJECT_ROOT=$(find . -maxdepth 2 -name kmod -type d | head -n 1 | cut -d/ -f2)
-if [ -n "$PROJECT_ROOT" ]; then
+
+# Find the actual project root (it might be in a subdir)
+PROJECT_ROOT=$(find . -maxdepth 2 -name kmod -type d | head -n 1 | awk -F/ '{print $2}')
+echo "--- Detected project root: $PROJECT_ROOT ---"
+if [ -n "$PROJECT_ROOT" ] && [ "$PROJECT_ROOT" != "." ]; then
     cd "$PROJECT_ROOT"
 fi
-
-# 3. Compile and load kernel module
-echo "--- Compiling kernel module in $(pwd) ---"
-make -C kmod
+echo "--- Current directory: $(pwd) ---"
+ls -la
 if lsmod | grep -q vac; then
     sudo rmmod vac
 fi
