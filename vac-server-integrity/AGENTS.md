@@ -21,6 +21,36 @@ make -C kmod
 # -> kmod/vac.ko — load with: insmod vac.ko
 ```
 
+## Non-Container Deployment (Direct on Host)
+
+If you don't want to use Docker/Podman containers, run the components directly:
+
+```bash
+# 1. Load kernel module
+sudo insmod kmod/vac.ko
+sudo chmod 666 /dev/vac
+
+# 2. Generate PQC keys
+cargo run -p gen-keys -- /etc/vac/keys/
+
+# 3. Start the test listener (acts as server-side scan coordinator)
+cargo run -p test-listener -- 28084
+
+# 4. In another terminal, run the daemon (client-side scanner)
+./target/release/vac-daemon <server_ip>:28084 <steam_id>
+```
+
+## SHELL Warning (Podman)
+
+When building with `podman`, you may see:
+```
+SHELL is not supported for OCI image format, [/bin/bash -o pipefail -c] will be ignored.
+```
+This is **harmless**. Podman's OCI format doesn't persist the SHELL directive, so the default shell (`/bin/sh`) is used for RUN commands. To suppress it, build with `--format docker`:
+```bash
+podman build --format docker -t vac-test-server -f docker/Dockerfile .
+```
+
 ## Workspace Layout
 
 | Crate | Path | Purpose |
