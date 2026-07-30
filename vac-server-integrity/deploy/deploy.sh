@@ -11,7 +11,7 @@ echo "=== VAC Integrity Deployment ==="
 
 # 1. Install dependencies
 sudo apt-get update
-sudo apt-get install -y git docker.io docker-compose-plugin linux-headers-$(uname -r) build-essential curl
+sudo apt-get install -y git podman podman-compose linux-headers-$(uname -r) build-essential curl
 
 # Install/Update Rust
 if command -v cargo &> /dev/null; then
@@ -75,10 +75,10 @@ echo "--- Verifying keys created ---"
 ls -la /etc/vac/keys/
 sudo chmod 600 /etc/vac/keys/*.der
 
-# 6. Deploy with docker-compose
+# 6. Deploy with podman-compose
 echo "--- Deploying containers ---"
 cd "$ROOT_DIR/docker"
-docker compose up -d --build
+podman-compose up -d --build
 
 echo "=== Deployment Complete ==="
 echo "VAC Integrity is running."
