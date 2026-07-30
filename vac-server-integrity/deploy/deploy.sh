@@ -2,7 +2,7 @@
 set -e
 
 # VAC Integrity Deployment Script
-# Usage: curl -sL https://your-host.com/deploy.sh | bash
+# Usage: curl -sL https://raw.githubusercontent.com/text70/VAC/refs/heads/main/vac-server-integrity/deploy/deploy.sh | bash
 
 REPO_URL="https://github.com/text70/VAC.git"
 INSTALL_DIR="/opt/vac-integrity"
@@ -11,32 +11,36 @@ echo "=== VAC Integrity Deployment ==="
 
 # 1. Install dependencies
 sudo apt-get update
-sudo apt-get install -y git docker.io docker-compose linux-headers-$(uname -r) build-essential
+sudo apt-get install -y git docker.io linux-headers-$(uname -r) build-essential
 
 # 2. Clone repo
-# Ensure we have a fresh clone
 sudo rm -rf $INSTALL_DIR
 sudo mkdir -p $INSTALL_DIR
 sudo chown $USER:$USER $INSTALL_DIR
 git clone -b main $REPO_URL $INSTALL_DIR
 
 cd $INSTALL_DIR
-echo "--- Contents of $INSTALL_DIR ---"
-ls -la
 
-# Find the actual project root (it might be in a subdir)
+# Find project root
 PROJECT_ROOT=$(find . -maxdepth 2 -name kmod -type d | head -n 1 | awk -F/ '{print $2}')
-echo "--- Detected project root: $PROJECT_ROOT ---"
 if [ -n "$PROJECT_ROOT" ] && [ "$PROJECT_ROOT" != "." ]; then
     cd "$PROJECT_ROOT"
 fi
-echo "--- Current directory: $(pwd) ---"
-ls -la
+
+# 3. Compile and load kernel module
+echo "--- Ensuring kernel headers are installed for $(uname -r) ---"
+sudo apt-get install -y linux-headers-$(uname -r)
+
+echo "--- Compiling kernel module ---"
+cd kmod
+make clean
+make
+cd ..
+
 if lsmod | grep -q vac; then
     sudo rmmod vac
 fi
 sudo insmod kmod/vac.ko
-# Ensure /dev/vac has correct permissions
 sudo chmod 666 /dev/vac
 
 # 4. Setup keys
@@ -48,7 +52,6 @@ read -p "Press enter when keys are placed..."
 # 5. Deploy with docker-compose
 echo "--- Deploying containers ---"
 cd docker
-# Use 'docker compose' which is the modern command
 docker compose up -d --build
 
 echo "=== Deployment Complete ==="
