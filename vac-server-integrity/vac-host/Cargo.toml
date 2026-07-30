@@ -1,0 +1,20 @@
+[package]
+name = "vac-integrity"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "vac_integrity"
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+vac-core = { path = "../vac-core" }
+vac-sys = { path = "../vac-sys" }
+vac-crypto = { path = "../vac-crypto" }
+vac-module-systeminfo = { path = "../vac-module-systeminfo" }
+rand = "0.8"
+vac-module-processhandle = { path = "../vac-module-processhandle" }
+vac-module-processmonitor = { path = "../vac-module-processmonitor" }
+vac-module-deviceinfo = { path = "../vac-module-deviceinfo" }
+vac-module-driverinfo = { path = "../vac-module-driverinfo" }
+vac-module-readmodules = { path = "../vac-module-readmodules" }

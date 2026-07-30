@@ -1,0 +1,9 @@
+[package]
+name = "gen-keys"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pqcrypto-kyber = "0.8"
+pqcrypto-dilithium = "0.4"
+pqcrypto-traits = "0.3"

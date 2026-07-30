@@ -1,0 +1,10 @@
+[package]
+name = "vac-daemon"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+vac-client-core = { path = "../vac-client-core" }
+vac-core = { path = "../vac-core" }
+vac-crypto = { path = "../vac-crypto" }
+vac-sys = { path = "../vac-sys" }

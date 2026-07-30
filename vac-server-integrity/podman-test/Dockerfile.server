@@ -1,0 +1,27 @@
+FROM docker.io/rust:latest AS builder
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY vac-core/ vac-core/
+COPY vac-sys/ vac-sys/
+COPY vac-crypto/ vac-crypto/
+COPY vac-module-systeminfo/ vac-module-systeminfo/
+COPY vac-module-processhandle/ vac-module-processhandle/
+COPY vac-module-processmonitor/ vac-module-processmonitor/
+COPY vac-module-deviceinfo/ vac-module-deviceinfo/
+COPY vac-module-driverinfo/ vac-module-driverinfo/
+COPY vac-module-readmodules/ vac-module-readmodules/
+COPY vac-host/ vac-host/
+COPY vac-client-core/ vac-client-core/
+COPY vac-client-linux/ vac-client-linux/
+COPY vac-client-win/ vac-client-win/
+COPY vac-daemon/ vac-daemon/
+COPY tools/ tools/
+COPY test-harness/ test-harness/
+RUN cargo build --release -p test-listener -p vac-daemon
+
+FROM docker.io/archlinux:latest
+RUN pacman -Syu --noconfirm && rm -rf /var/cache/pacman/pkg/*
+COPY --from=builder /build/target/release/test-listener /usr/local/bin/
+EXPOSE 28084/tcp
+ENTRYPOINT ["test-listener", "28084"]

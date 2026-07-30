@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    "vac-core",
+    "vac-sys",
+    "vac-crypto",
+    "vac-module-systeminfo",
+    "vac-module-processhandle",
+    "vac-module-processmonitor",
+    "vac-module-deviceinfo",
+    "vac-module-driverinfo",
+    "vac-module-readmodules",
+    "vac-host",
+    "tools/gen-keys",
+    "tools/test-listener",
+    "test-harness",
+    "vac-client-core",
+    "vac-client-linux",
+    "vac-client-win",
+    "vac-daemon",
+]

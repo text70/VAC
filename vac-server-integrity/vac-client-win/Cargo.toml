@@ -1,0 +1,17 @@
+[package]
+name = "vac-client-win"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "vac_client_win"
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+vac-core = { path = "../vac-core" }
+vac-sys = { path = "../vac-sys" }
+vac-crypto = { path = "../vac-crypto" }
+vac-client-core = { path = "../vac-client-core" }
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["tlhelp32", "psapi", "processthreadsapi", "debug", "handleapi", "synchapi", "winnt", "minwindef", "memoryapi"] }

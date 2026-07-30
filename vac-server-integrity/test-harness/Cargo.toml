@@ -1,0 +1,22 @@
+[package]
+name = "test-harness"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+vac-core = { path = "../vac-core" }
+vac-sys = { path = "../vac-sys" }
+vac-crypto = { path = "../vac-crypto" }
+vac-module-systeminfo = { path = "../vac-module-systeminfo" }
+vac-module-processhandle = { path = "../vac-module-processhandle" }
+vac-module-processmonitor = { path = "../vac-module-processmonitor" }
+vac-module-deviceinfo = { path = "../vac-module-deviceinfo" }
+vac-module-driverinfo = { path = "../vac-module-driverinfo" }
+vac-module-readmodules = { path = "../vac-module-readmodules" }
+vac-integrity = { path = "../vac-host" }
+vac-client-core = { path = "../vac-client-core" }
+vac-client-linux = { path = "../vac-client-linux" }
+pqcrypto-kyber = "0.8"
+pqcrypto-dilithium = "0.4"
+pqcrypto-traits = "0.3"
+hex = "0.4"

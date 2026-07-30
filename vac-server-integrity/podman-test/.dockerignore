@@ -1,0 +1,6 @@
+target/
+.git/
+*.md
+docker/
+podman-test/
+vac-plugin/VacIntegrity.dll

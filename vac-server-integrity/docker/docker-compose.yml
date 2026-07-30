@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  rust-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "28015:28015/udp"   # Game
+      - "28082:28082/tcp"   # RCON/App
+    volumes:
+      - rust-server-data:/server/server
+      - /etc/vac/keys:/server/carbon/native:ro
+    devices:
+      - /dev/vac:/dev/vac
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+
+volumes:
+  rust-server-data:
