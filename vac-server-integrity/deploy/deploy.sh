@@ -14,15 +14,15 @@ sudo apt-get update
 sudo apt-get install -y git docker.io docker-compose linux-headers-$(uname -r) build-essential
 
 # 2. Clone repo
-if [ ! -d "$INSTALL_DIR" ]; then
-    sudo mkdir -p $INSTALL_DIR
-    sudo chown $USER:$USER $INSTALL_DIR
-    git clone $REPO_URL $INSTALL_DIR
-fi
+# Ensure we have a fresh clone
+sudo rm -rf $INSTALL_DIR
+sudo mkdir -p $INSTALL_DIR
+sudo chown $USER:$USER $INSTALL_DIR
+git clone -b main $REPO_URL $INSTALL_DIR
 
-echo "--- Directory contents after clone ---"
-ls -la $INSTALL_DIR
 cd $INSTALL_DIR
+echo "--- Contents of $INSTALL_DIR ---"
+ls -la
 
 # Find the actual project root (it might be in a subdir)
 PROJECT_ROOT=$(find . -maxdepth 2 -name kmod -type d | head -n 1 | awk -F/ '{print $2}')
