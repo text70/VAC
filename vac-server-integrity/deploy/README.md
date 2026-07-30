@@ -3,7 +3,7 @@
 To deploy the VAC Integrity test server, run the following command on your cloud host:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/VAC/vac-server-integrity/main/deploy/deploy.sh | bash
+curl -sL https://raw.githubusercontent.com/text70/VAC/refs/heads/master/vac-server-integrity/deploy/deploy.sh | bash
 ```
 
 ### Requirements
