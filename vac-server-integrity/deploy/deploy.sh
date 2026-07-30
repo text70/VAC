@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -ex # Enable command tracing and exit on failure
 
 # VAC Integrity Deployment Script
 # Usage: curl -sL https://raw.githubusercontent.com/text70/VAC/refs/heads/main/vac-server-integrity/deploy/deploy.sh | bash
@@ -49,10 +49,17 @@ cd "$ROOT_DIR"
 cargo build --release -p gen-keys
 
 echo "--- Generating PQC keys ---"
-sudo mkdir -p /etc/vac/keys
-"$ROOT_DIR/target/release/gen-keys" /etc/vac/keys/
+GEN_KEYS_PATH="$ROOT_DIR/target/release/gen-keys"
+if [ ! -f "$GEN_KEYS_PATH" ]; then
+    echo "ERROR: Key generator not found at $GEN_KEYS_PATH"
+    exit 1
+fi
 
-echo "--- Securing keys ---"
+sudo mkdir -p /etc/vac/keys
+"$GEN_KEYS_PATH" /etc/vac/keys/
+
+echo "--- Verifying keys ---"
+ls -l /etc/vac/keys/
 sudo chmod 600 /etc/vac/keys/*.der
 
 # 6. Deploy with docker-compose
