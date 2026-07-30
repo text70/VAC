@@ -11,7 +11,8 @@ echo "=== VAC Integrity Deployment ==="
 
 # 1. Install dependencies
 sudo apt-get update
-sudo apt-get install -y git podman podman-compose linux-headers-$(uname -r) build-essential curl
+sudo apt-get install -y git podman python3-pip linux-headers-$(uname -r) build-essential curl
+pip3 install podman-compose
 
 # Install/Update Rust
 if command -v cargo &> /dev/null; then
