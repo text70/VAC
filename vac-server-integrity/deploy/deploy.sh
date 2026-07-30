@@ -4,7 +4,7 @@ set -e
 # VAC Integrity Deployment Script
 # Usage: curl -sL https://your-host.com/deploy.sh | bash
 
-REPO_URL="https://github.com/VAC/vac-server-integrity.git"
+REPO_URL="https://github.com/text70/VAC.git"
 INSTALL_DIR="/opt/vac-integrity"
 
 echo "=== VAC Integrity Deployment ==="
