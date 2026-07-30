@@ -19,10 +19,16 @@ if [ ! -d "$INSTALL_DIR" ]; then
     sudo chown $USER:$USER $INSTALL_DIR
     git clone $REPO_URL $INSTALL_DIR
 fi
+
+# Find the actual project root (it might be in a subdir)
 cd $INSTALL_DIR
+PROJECT_ROOT=$(find . -maxdepth 2 -name kmod -type d | head -n 1 | cut -d/ -f2)
+if [ -n "$PROJECT_ROOT" ]; then
+    cd "$PROJECT_ROOT"
+fi
 
 # 3. Compile and load kernel module
-echo "--- Compiling kernel module ---"
+echo "--- Compiling kernel module in $(pwd) ---"
 make -C kmod
 if lsmod | grep -q vac; then
     sudo rmmod vac
@@ -40,7 +46,8 @@ read -p "Press enter when keys are placed..."
 # 5. Deploy with docker-compose
 echo "--- Deploying containers ---"
 cd docker
-docker-compose up -d --build
+# Use 'docker compose' which is the modern command
+docker compose up -d --build
 
 echo "=== Deployment Complete ==="
 echo "VAC Integrity is running."
