@@ -43,11 +43,16 @@ fi
 sudo insmod kmod/vac.ko
 sudo chmod 666 /dev/vac
 
-# 4. Setup keys
-echo "--- Setting up keys ---"
+# 4. Setup keys and build generator
+echo "--- Building key generator ---"
+cargo build --release -p gen-keys
+
+echo "--- Generating PQC keys ---"
 sudo mkdir -p /etc/vac/keys
-echo "Please place your PQC keys (kyber_public.der, mldsa65_secret.der, kyber_secret.der, mldsa65_public.der) in /etc/vac/keys/"
-read -p "Press enter when keys are placed..."
+./target/release/gen-keys /etc/vac/keys/
+
+echo "--- Securing keys ---"
+sudo chmod 600 /etc/vac/keys/*.der
 
 # 5. Deploy with docker-compose
 echo "--- Deploying containers ---"
