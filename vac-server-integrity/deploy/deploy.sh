@@ -13,11 +13,19 @@ echo "=== VAC Integrity Deployment ==="
 sudo apt-get update
 sudo apt-get install -y git docker.io linux-headers-$(uname -r) build-essential curl
 
-# Install Rust
-if ! command -v cargo &> /dev/null; then
+# Install/Update Rust
+if command -v cargo &> /dev/null; then
+    echo "--- Updating Rust ---"
+    rustup update
+else
+    echo "--- Installing Rust ---"
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    source "$HOME/.cargo/env"
 fi
+
+# Ensure cargo is in the PATH for this script session
+export PATH="$HOME/.cargo/bin:$PATH"
+echo "--- Rust version: $(rustc --version) ---"
+echo "--- Cargo version: $(cargo --version) ---"
 
 # 2. Clone repo
 sudo rm -rf $INSTALL_DIR
