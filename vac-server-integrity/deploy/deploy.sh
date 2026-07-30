@@ -19,23 +19,23 @@ sudo mkdir -p $INSTALL_DIR
 sudo chown $USER:$USER $INSTALL_DIR
 git clone -b main $REPO_URL $INSTALL_DIR
 
+# 3. Setup paths
 cd $INSTALL_DIR
-
-# Find project root
+# Find the actual project root (e.g., ./vac-server-integrity)
 PROJECT_ROOT=$(find . -maxdepth 2 -name kmod -type d | head -n 1 | awk -F/ '{print $2}')
-if [ -n "$PROJECT_ROOT" ] && [ "$PROJECT_ROOT" != "." ]; then
-    cd "$PROJECT_ROOT"
-fi
+if [ -z "$PROJECT_ROOT" ]; then PROJECT_ROOT="."; fi
+ROOT_DIR="$(pwd)/$PROJECT_ROOT"
+echo "--- Detected project root: $ROOT_DIR ---"
 
-# 3. Compile and load kernel module
+# 4. Compile and load kernel module
 echo "--- Ensuring kernel headers are installed for $(uname -r) ---"
 sudo apt-get install -y linux-headers-$(uname -r)
 
 echo "--- Compiling kernel module ---"
-cd kmod
+cd "$ROOT_DIR/kmod"
 make clean
 make
-cd ..
+cd "$ROOT_DIR"
 
 if lsmod | grep -q vac; then
     sudo rmmod vac
@@ -43,20 +43,21 @@ fi
 sudo insmod kmod/vac.ko
 sudo chmod 666 /dev/vac
 
-# 4. Setup keys and build generator
+# 5. Build generator and setup keys
 echo "--- Building key generator ---"
+cd "$ROOT_DIR"
 cargo build --release -p gen-keys
 
 echo "--- Generating PQC keys ---"
 sudo mkdir -p /etc/vac/keys
-./target/release/gen-keys /etc/vac/keys/
+"$ROOT_DIR/target/release/gen-keys" /etc/vac/keys/
 
 echo "--- Securing keys ---"
 sudo chmod 600 /etc/vac/keys/*.der
 
-# 5. Deploy with docker-compose
+# 6. Deploy with docker-compose
 echo "--- Deploying containers ---"
-cd docker
+cd "$ROOT_DIR/docker"
 docker compose up -d --build
 
 echo "=== Deployment Complete ==="
