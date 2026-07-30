@@ -11,7 +11,13 @@ echo "=== VAC Integrity Deployment ==="
 
 # 1. Install dependencies
 sudo apt-get update
-sudo apt-get install -y git docker.io linux-headers-$(uname -r) build-essential
+sudo apt-get install -y git docker.io linux-headers-$(uname -r) build-essential curl
+
+# Install Rust
+if ! command -v cargo &> /dev/null; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    source "$HOME/.cargo/env"
+fi
 
 # 2. Clone repo
 sudo rm -rf $INSTALL_DIR
