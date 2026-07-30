@@ -78,7 +78,7 @@ sudo chmod 600 /etc/vac/keys/*.der
 # 6. Deploy with docker-compose
 echo "--- Deploying containers ---"
 cd "$ROOT_DIR/docker"
-docker compose up -d --build
+docker-compose up -d --build
 
 echo "=== Deployment Complete ==="
 echo "VAC Integrity is running."
