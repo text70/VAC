@@ -56,16 +56,15 @@ cargo build --release -p gen-keys
 
 echo "--- Generating PQC keys ---"
 GEN_KEYS_PATH="$ROOT_DIR/target/release/gen-keys"
-if [ ! -f "$GEN_KEYS_PATH" ]; then
-    echo "ERROR: Key generator not found at $GEN_KEYS_PATH"
-    exit 1
-fi
-
 sudo mkdir -p /etc/vac/keys
-"$GEN_KEYS_PATH" /etc/vac/keys/
 
-echo "--- Verifying keys ---"
-ls -l /etc/vac/keys/
+# Run from the target directory and use an absolute path for safety
+cd /etc/vac/keys/
+"$GEN_KEYS_PATH" /etc/vac/keys/
+cd "$ROOT_DIR"
+
+echo "--- Verifying keys created ---"
+ls -la /etc/vac/keys/
 sudo chmod 600 /etc/vac/keys/*.der
 
 # 6. Deploy with docker-compose
