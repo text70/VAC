@@ -1,15 +1,20 @@
 # Deployment
 
-To deploy the VAC Integrity test server, run the following command on your cloud host:
+To deploy the VAC Integrity test server, run one of these commands on your host:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/text70/VAC/refs/heads/master/vac-server-integrity/deploy/deploy.sh | bash
+# As root (recommended):
+curl -sL https://raw.githubusercontent.com/text70/VAC/refs/heads/main/vac-server-integrity/deploy/deploy.sh | bash
+
+# Or with sudo:
+curl -sL https://raw.githubusercontent.com/text70/VAC/refs/heads/main/vac-server-integrity/deploy/deploy.sh | sudo bash
 ```
 
 ### Requirements
-- Ubuntu 22.04 or compatible Linux distribution.
-- Root access (the script uses `sudo`).
-- Kernel headers installed (handled by script).
+- **OS**: Ubuntu 22.04+, Debian 12+, or any Debian-based distro
+- **Root access** required (the script auto-detects root vs sudo)
+- **Kernel headers**: auto-installed by the script
+- **Disk space**: at least 20GB free (for RustDedicated download)
 
 ### Security
-The deployment script requires you to manually place your PQC keys in `/etc/vac/keys/` after the directory is created, ensuring they are not bundled in the Docker image.
+PQC keys are auto-generated on the host at `/etc/vac/keys/` and mounted read-only into the container via `docker-compose.yml`. Keys are never stored in the container image.

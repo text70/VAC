@@ -40,6 +40,16 @@ cargo run -p test-listener -- 28084
 ./target/release/vac-daemon <server_ip>:28084 <steam_id>
 ```
 
+## Docker/Podman Deployment
+
+Supported on **Ubuntu 22.04+** and **Debian 12+**.
+
+```bash
+curl -sL https://raw.githubusercontent.com/text70/VAC/refs/heads/main/vac-server-integrity/deploy/deploy.sh | sudo bash
+```
+
+The script auto-detects root vs sudo and installs all dependencies.
+
 ## SHELL Warning (Podman)
 
 When building with `podman`, you may see:

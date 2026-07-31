@@ -1,17 +1,25 @@
 #!/bin/bash
-set -ex # Enable command tracing and exit on failure
+set -ex
 
 # VAC Integrity Deployment Script
-# Usage: curl -sL https://raw.githubusercontent.com/text70/VAC/refs/heads/main/vac-server-integrity/deploy/deploy.sh | bash
+# Usage (as root):    curl -sL https://raw.githubusercontent.com/text70/VAC/refs/heads/main/vac-server-integrity/deploy/deploy.sh | bash
+# Usage (with sudo):  curl -sL https://raw.githubusercontent.com/text70/VAC/refs/heads/main/vac-server-integrity/deploy/deploy.sh | sudo bash
 
 REPO_URL="https://github.com/text70/VAC.git"
 INSTALL_DIR="/opt/vac-integrity"
 
+# Handle sudo gracefully — skip if already root
+if [ "$(id -u)" -eq 0 ]; then
+    SUDO=""
+else
+    SUDO="sudo"
+fi
+
 echo "=== VAC Integrity Deployment ==="
 
 # 1. Install dependencies
-sudo apt-get update
-sudo apt-get install -y git podman python3-pip linux-headers-$(uname -r) build-essential curl
+$SUDO apt-get update
+$SUDO apt-get install -y git podman python3-pip linux-headers-$(uname -r) build-essential curl
 pip3 install podman-compose
 
 # Install/Update Rust
@@ -23,20 +31,18 @@ else
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 fi
 
-# Ensure cargo is in the PATH for this script session
 export PATH="$HOME/.cargo/bin:$PATH"
 echo "--- Rust version: $(rustc --version) ---"
 echo "--- Cargo version: $(cargo --version) ---"
 
 # 2. Clone repo
-sudo rm -rf $INSTALL_DIR
-sudo mkdir -p $INSTALL_DIR
-sudo chown $USER:$USER $INSTALL_DIR
+$SUDO rm -rf $INSTALL_DIR
+$SUDO mkdir -p $INSTALL_DIR
+$SUDO chown $USER:$USER $INSTALL_DIR
 git clone -b main $REPO_URL $INSTALL_DIR
 
 # 3. Setup paths
 cd $INSTALL_DIR
-# Find the actual project root (e.g., ./vac-server-integrity)
 PROJECT_ROOT=$(find . -maxdepth 2 -name kmod -type d | head -n 1 | awk -F/ '{print $2}')
 if [ -z "$PROJECT_ROOT" ]; then PROJECT_ROOT="."; fi
 ROOT_DIR="$(pwd)/$PROJECT_ROOT"
@@ -44,7 +50,7 @@ echo "--- Detected project root: $ROOT_DIR ---"
 
 # 4. Compile and load kernel module
 echo "--- Ensuring kernel headers are installed for $(uname -r) ---"
-sudo apt-get install -y linux-headers-$(uname -r)
+$SUDO apt-get install -y linux-headers-$(uname -r)
 
 echo "--- Compiling kernel module ---"
 cd "$ROOT_DIR/kmod"
@@ -53,10 +59,10 @@ make
 cd "$ROOT_DIR"
 
 if lsmod | grep -q vac; then
-    sudo rmmod vac
+    $SUDO rmmod vac
 fi
-sudo insmod kmod/vac.ko
-sudo chmod 666 /dev/vac
+$SUDO insmod kmod/vac.ko
+$SUDO chmod 666 /dev/vac
 
 # 5. Build VAC binaries and stage them for container build
 echo "--- Building VAC binaries ---"
@@ -75,23 +81,21 @@ cargo build --release -p gen-keys
 
 echo "--- Generating PQC keys ---"
 GEN_KEYS_PATH="$ROOT_DIR/target/release/gen-keys"
-sudo mkdir -p /etc/vac/keys
+$SUDO mkdir -p /etc/vac/keys
 
-# Run from the target directory and use an absolute path for safety
 cd /etc/vac/keys/
 "$GEN_KEYS_PATH" /etc/vac/keys/
 cd "$ROOT_DIR"
 
 echo "--- Verifying keys created ---"
 ls -la /etc/vac/keys/
-sudo chmod 600 /etc/vac/keys/*.der
+$SUDO chmod 600 /etc/vac/keys/*.der
 
-# 6. Deploy with podman-compose
+# 7. Deploy with podman-compose
 echo "--- Deploying containers ---"
 cd "$ROOT_DIR/docker"
 podman-compose up -d --build
 
-# Clean up staging directory
 rm -rf "$ROOT_DIR/docker/build-staging"
 
 echo "=== Deployment Complete ==="
