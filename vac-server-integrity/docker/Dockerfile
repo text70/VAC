@@ -1,35 +1,11 @@
 # syntax=docker/dockerfile:1
 #------------------------------------------------------------------------------
-# Builder stage: Build VAC binaries inside the container for compatibility
-#------------------------------------------------------------------------------
-FROM docker.io/ubuntu:22.04 AS builder
-
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    pkg-config \
-    libssl-dev \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Rust via rustup (matches runtime GLIBC 2.35)
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-ENV PATH="/root/.cargo/bin:${PATH}"
-
-WORKDIR /usr/src/VAC
-COPY . .
-RUN cargo fetch
-
-# Build the necessary components
-RUN cargo build --release -p vac-integrity -p vac-daemon
-
-#------------------------------------------------------------------------------
-# Server stage: Install RustDedicated + Carbon
+# Server stage: Install RustDedicated + Carbon (pre-built VAC binaries)
 #------------------------------------------------------------------------------
 FROM docker.io/steamcmd/steamcmd:ubuntu-22 AS server
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV SERVER_DIR=/server
-ENV CARBON_VERSION=production_build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -46,7 +22,17 @@ RUN mkdir -p ${SERVER_DIR} && \
     +app_update 258550 validate \
     +quit
 
+# Clean steamcmd cache (~500MB)
+RUN rm -rf /root/.local/share/Steam/steamcmd/linux32 /root/Steam/logs
+
+# Remove unused assets to save space
+RUN rm -rf ${SERVER_DIR}/RustDedicated_Data/StreamingAssets/AssetBundles \
+    ${SERVER_DIR}/RustDedicated_Data/StreamingAssets/Resources \
+    ${SERVER_DIR}/RustDedicated_Data/StreamingAssets/Standard Assets \
+    ${SERVER_DIR}/RustDedicated_Data/StreamingAssets/unity\ default\ resources
+
 # Install Carbon mod
+ENV CARBON_VERSION=production_build
 RUN CARBON_URL="https://github.com/CarbonCommunity/Carbon/releases/download/${CARBON_VERSION}/Carbon.Linux.Release.tar.gz" && \
     wget -qO /tmp/carbon.tar.gz "${CARBON_URL}" && \
     tar -xzf /tmp/carbon.tar.gz -C ${SERVER_DIR} && \
@@ -72,9 +58,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy RustDedicated + Carbon from server stage
 COPY --from=server ${SERVER_DIR} ${SERVER_DIR}
 
-# Copy VAC binaries from builder stage
-COPY --from=builder /usr/src/VAC/target/release/libvac_integrity.so ${NATIVE_DIR}/
-COPY --from=builder /usr/src/VAC/target/release/vac-daemon ${NATIVE_DIR}/
+# Copy pre-built VAC binaries from host context
+COPY target/release/libvac_integrity.so ${NATIVE_DIR}/
+COPY target/release/vac-daemon ${NATIVE_DIR}/
 
 # Copy VacIntegrity C# plugin source
 COPY vac-plugin/VacIntegrity.cs ${PLUGINS_DIR}/
