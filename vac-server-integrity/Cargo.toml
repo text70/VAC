@@ -18,4 +18,5 @@ members = [
     "vac-client-linux",
     "vac-client-win",
     "vac-daemon",
+    "vac-daemon-win",
 ]

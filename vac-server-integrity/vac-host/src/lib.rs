@@ -425,6 +425,17 @@ pub extern "C" fn vac_server_report_cheat(steam_id_lo: u32, steam_id_hi: u32, re
     0
 }
 
+/// Check if a daemon is currently connected for a player.
+/// Returns 1 if connected, 0 otherwise.
+#[no_mangle]
+pub extern "C" fn vac_server_daemon_connected(
+    steam_id_lo: u32,
+    steam_id_hi: u32,
+) -> i32 {
+    let steam_id = (steam_id_hi as u64) << 32 | steam_id_lo as u64;
+    if listener::is_connected(steam_id) { 1 } else { 0 }
+}
+
 /// Shutdown the VAC integrity system.
 #[no_mangle]
 pub extern "C" fn vac_shutdown() -> i32 {

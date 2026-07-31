@@ -1,0 +1,14 @@
+[package]
+name = "vac-daemon-win"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "vac-daemon-win"
+path = "src/main.rs"
+
+[dependencies]
+vac-core = { path = "../vac-core" }
+vac-sys = { path = "../vac-sys" }
+vac-crypto = { path = "../vac-crypto" }
+vac-client-core = { path = "../vac-client-core" }

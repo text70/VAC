@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,6 +17,7 @@ struct ListenerState {
     handle: Option<thread::JoinHandle<()>>,
     stop_flag: Arc<AtomicBool>,
     registered: Arc<Mutex<HashMap<u64, (String, ScoreState)>>>,
+    connected: Arc<Mutex<HashSet<u64>>>,
 }
 
 static LISTENER: RwLock<Option<ListenerState>> = RwLock::new(None);
@@ -183,7 +184,7 @@ fn analyze_client_module(mid: u32, buf: &DataBuffer, cursor: usize, player_name:
             }
         }
         102 => {
-            if cursor > 0 && buf.raw[0] > 300 {
+            if cursor > 0 && buf.raw[0] > 400 {
                 let count = buf.raw[0];
                 eprintln!("[vac-listener] {} MODULE 102: excessive libraries ({})", player_name, count);
                 state.add_finding(FindingKind::SuspiciousEnv { flags: count }, 15);
@@ -296,7 +297,7 @@ fn enforce_score_state(steam_id: u64, player_name: &str, state: &ScoreState) {
     }
 }
 
-fn handle_client(mut stream: TcpStream, registered: Arc<Mutex<HashMap<u64, (String, ScoreState)>>>) {
+fn handle_client(mut stream: TcpStream, registered: Arc<Mutex<HashMap<u64, (String, ScoreState)>>>, connected: Arc<Mutex<HashSet<u64>>>) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
 
     let mut len_buf = [0u8; 4];
@@ -321,6 +322,23 @@ fn handle_client(mut stream: TcpStream, registered: Arc<Mutex<HashMap<u64, (Stri
     };
 
     if send_msg(&mut stream, 0x02, &[]).is_err() { return; }
+    {
+        let mut conn = connected.lock().unwrap();
+        conn.insert(steam_id);
+    }
+    // Drop guard: remove steam_id from connected on any exit path
+    struct RemoveOnDrop<'a> {
+        connected: &'a Arc<std::sync::Mutex<HashSet<u64>>>,
+        steam_id: u64,
+    }
+    impl<'a> Drop for RemoveOnDrop<'a> {
+        fn drop(&mut self) {
+            if let Ok(mut conn) = self.connected.lock() {
+                conn.remove(&self.steam_id);
+            }
+        }
+    }
+    let _guard = RemoveOnDrop { connected: &connected, steam_id };
     eprintln!("[vac-listener] Client auth OK: {} steam_id={}", player_name, steam_id);
 
     // Get sealing keys from the scheduler
@@ -391,7 +409,7 @@ fn handle_client(mut stream: TcpStream, registered: Arc<Mutex<HashMap<u64, (Stri
     }
 }
 
-fn listener_thread(port: u16, stop: Arc<AtomicBool>, registered: Arc<Mutex<HashMap<u64, (String, ScoreState)>>>) {
+fn listener_thread(port: u16, stop: Arc<AtomicBool>, registered: Arc<Mutex<HashMap<u64, (String, ScoreState)>>>, connected: Arc<Mutex<HashSet<u64>>>) {
     let addr = format!("0.0.0.0:{}", port);
     let listener = match TcpListener::bind(&addr) {
         Ok(l) => {
@@ -409,7 +427,8 @@ fn listener_thread(port: u16, stop: Arc<AtomicBool>, registered: Arc<Mutex<HashM
         match listener.accept() {
             Ok((stream, _)) => {
                 let reg = registered.clone();
-                thread::spawn(move || handle_client(stream, reg));
+                let conn = connected.clone();
+                thread::spawn(move || handle_client(stream, reg, conn));
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(100));
@@ -430,11 +449,13 @@ pub fn start(port: u16) -> bool {
 
     let stop = Arc::new(AtomicBool::new(false));
     let registered: Arc<Mutex<HashMap<u64, (String, ScoreState)>>> = Arc::new(Mutex::new(HashMap::new()));
+    let connected: Arc<Mutex<HashSet<u64>>> = Arc::new(Mutex::new(HashSet::new()));
 
     let stop_clone = stop.clone();
     let reg_clone = registered.clone();
+    let conn_clone = connected.clone();
     let handle = thread::spawn(move || {
-        listener_thread(port, stop_clone, reg_clone);
+        listener_thread(port, stop_clone, reg_clone, conn_clone);
     });
 
     if let Ok(mut guard) = LISTENER.write() {
@@ -442,6 +463,7 @@ pub fn start(port: u16) -> bool {
             handle: Some(handle),
             stop_flag: stop,
             registered,
+            connected,
         });
     }
     true
@@ -476,4 +498,14 @@ pub fn unregister_client(steam_id: u64) {
             reg.remove(&steam_id);
         }
     }
+}
+
+pub fn is_connected(steam_id: u64) -> bool {
+    if let Ok(guard) = LISTENER.read() {
+        if let Some(ref ls) = *guard {
+            let conn = ls.connected.lock().unwrap();
+            return conn.contains(&steam_id);
+        }
+    }
+    false
 }

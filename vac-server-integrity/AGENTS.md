@@ -105,11 +105,13 @@ podman build --format docker -t vac-test-server -f docker/Dockerfile .
 | `gen-keys` | `tools/gen-keys/` | PQC key pair generator |
 | `test-harness` | `test-harness/` | End-to-end test runner |
 | `test-listener` | `tools/test-listener/` | Standalone TCP listener for podman test harness |
-| `vac-daemon` | `vac-daemon/` | Client-side daemon: connects to listener, runs scans, returns PQC-sealed results |
+| `vac-daemon` | `vac-daemon/` | Client-side daemon: connects to listener, runs scans, returns PQC-sealed results (Linux) |
+| `vac-daemon-win` | `vac-daemon-win/` | Client-side daemon for Windows (cross-compiled via mingw) |
 | `vac-client-core` | `vac-client-core/` | Platform-agnostic client scan modules (runs 6 scan types via SystemOps) |
 | `vac-client-linux` | `vac-client-linux/` | Linux cdylib exporting vac_client_scan() |
 | `vac-client-win` | `vac-client-win/` | Windows cdylib exporting vac_client_scan() (cross-compilable) |
-| `vac-plugin` | `vac-plugin/` | Carbon C# plugin (VacIntegrity.dll) |
+| `vac-plugin` | `vac-plugin/` | Carbon C# plugin (VacIntegrity.dll) — HTTP download server + hard enforcement |
+| `installer/` | `installer/` | Inno Setup script for Windows client installer (vac-setup.exe) |
 | `docker/` | `docker/` | Dockerfile + docker-compose for RustDedicated test server |
 | `kmod-win/` | `kmod-win/` | Windows kernel driver (`vac.sys`) — mirrors `kmod/` for Win10+ clients |
 
@@ -186,8 +188,65 @@ sc start Vac
 ### Rust cross-compile
 
 ```bash
-# Build the Rust Win32 client (no .sys needed)
+# Build the Rust Win32 Kmod client (no .sys needed)
 cargo build --release --target x86_64-pc-windows-gnu -p vac-sys
+
+# Build the Windows daemon binary
+cargo build --release --target x86_64-pc-windows-gnu -p vac-daemon-win
+# -> target/x86_64-pc-windows-gnu/release/vac-daemon-win.exe (1.8MB PE32+)
+```
+
+## Windows Client Daemon (`vac-daemon-win`)
+
+The `vac-daemon-win/` crate is the Windows equivalent of `vac-daemon`. It runs as a
+background process on Windows clients, connects to the Linux server's VAC listener
+(port 28084), and performs the same scan + PQC-seal + submit protocol.
+
+### Platform mapping
+
+| Daemon feature | Linux (`vac-daemon`) | Windows (`vac-daemon-win`) |
+|----------------|---------------------|---------------------------|
+| Process listing (ring-0) | VacKmod (ioctl) | Win32Kmod (DeviceIoControl) |
+| User-mode process list | `/proc/*/stat` | CreateToolhelp32Snapshot |
+| Memory region scan | `/proc/self/maps` | VirtualQueryEx |
+| Text integrity check | ELF magic (0x7fELF) | PE magic (MZ) |
+| Config | CLI args | `vac-daemon.ini` |
+| Steam ID | CLI arg | Auto-discover from `loginusers.vdf` or config |
+
+### How the turnkey flow works (Carbon package)
+
+1. Server operator deploys the **Carbon package** (VacIntegrity.dll + vac-setup.exe).
+2. Plugin starts a **TCP download server on port 28085** serving `vac-setup.exe`.
+3. Player connects → plugin registers them with the listener, sends a chat message
+   with the download URL, and starts a 60-second grace timer.
+4. Player downloads + runs `vac-setup.exe` (admin elevation required).
+5. Installer: installs `vac.sys` as a kernel service → installs `vac-daemon-win.exe`
+   as a service → prompts for server IP → starts both services.
+6. Daemon auto-discovers Steam ID from `%USERPROFILE%\AppData\Local\Steam\config\loginusers.vdf`.
+7. Daemon connects to `<server>:28084`, authenticates, and begins scanning.
+8. Plugin's enforcement timer kicks any player who hasn't connected a daemon
+   within the grace period (configurable via `vac_grace_seconds`).
+
+### Installer
+
+```bat
+:: Prerequisites: Inno Setup 6+ on Windows
+:: 1. Build vac.sys (kmod-win\build.cmd)
+:: 2. Cross-compile vac-daemon-win.exe
+:: 3. Run installer build script
+installer\build.cmd
+:: -> installer\Output\vac-setup.exe
+:: Sign: signtool sign /fd sha256 /a /tr http://timestamp.digicert.com /td sha256 ...\vac-setup.exe
+```
+
+### Carbon package layout
+
+```
+vac-carbon-package/
+  VacIntegrity.dll              -- Plugin binary
+  VacIntegrity.cfg              -- Optional config (grace seconds, etc.)
+  vac-setup.exe                 -- Windows client installer (hosted by plugin on port 28085)
+  README.md
 ```
 
 ## Hardware Presence (replaces TPM Attestation)
@@ -219,6 +278,9 @@ have shifted from "prove the system is clean" to "report available trust anchors
 - [x] vac-client-win (Implemented/Cross-compilable)
 - [x] Kernel module `vac.ko` compiles for kernel 6.x (IOCTL interface: FILL, PROC_LIST, READ_MEM, PROC_NAME)
 - [x] Windows kernel driver `vac.sys` source + `Win32Kmod` Rust client + attestation signing path
+- [x] vac-daemon-win cross-compiled (1.8MB PE32+), Inno Setup installer script
+- [x] Hard enforcement: plugin kicks if no daemon connected within grace period
+- [x] Plugin-hosted HTTP download server on port 28085
 - [x] Bug fixes: buffer truncation, plugin symbol mismatch, container namespace, unsync'd static mut, OOM vectors, wire-length caps, unsigned overflow, unscored modules
 - [ ] Kernel module loaded + tested in podman test environment
 

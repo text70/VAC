@@ -22,7 +22,7 @@ impl Win32System {
     unsafe fn wide_to_string(&self, wstr: &[u16]) -> String {
         let len = wstr.iter().position(|&c| c == 0).unwrap_or(wstr.len());
         let mut buf = vec![0u8; len * 4];
-        let written = (self.api.WideCharToMultiByte.unwrap())(
+        let written = (self.api.WideCharToMultiByte.expect("WideCharToMultiByte not available"))(
             65001, 0, wstr.as_ptr(), len as i32,
             buf.as_mut_ptr(), buf.len() as i32,
             std::ptr::null(), std::ptr::null_mut(),
@@ -43,11 +43,11 @@ impl Win32System {
 
 impl SystemOps for Win32System {
     fn current_process_id(&self) -> u32 {
-        unsafe { (self.api.GetCurrentProcessId.unwrap())() }
+        unsafe { (self.api.GetCurrentProcessId.expect("GetCurrentProcessId not available"))() }
     }
 
     fn current_thread_id(&self) -> u32 {
-        unsafe { (self.api.GetCurrentThreadId.unwrap())() }
+        unsafe { (self.api.GetCurrentThreadId.expect("GetCurrentThreadId not available"))() }
     }
 
     fn current_exe_path(&self) -> Result<String, io::Error> {
@@ -55,8 +55,8 @@ impl SystemOps for Win32System {
             let mut buf = [0u16; 4096];
             let mut len = buf.len() as u32;
             // Use QueryFullProcessImageNameW (entry 87) with GetCurrentProcess (entry 101)
-            let hproc = (self.api.GetCurrentProcess.unwrap())();
-            if (self.api.QueryFullProcessImageNameW.unwrap())(hproc, 0, buf.as_mut_ptr(), &mut len) == 0 {
+            let hproc = (self.api.GetCurrentProcess.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "GetCurrentProcess not available"))?)();
+            if (self.api.QueryFullProcessImageNameW.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "QueryFullProcessImageNameW not available"))?)(hproc, 0, buf.as_mut_ptr(), &mut len) == 0 {
                 return Err(io::Error::last_os_error());
             }
             Ok(self.wide_to_string(&buf))
@@ -65,7 +65,7 @@ impl SystemOps for Win32System {
 
     fn enumerate_processes(&self) -> Result<Vec<(u32, u32, String)>, io::Error> {
         unsafe {
-            let snapshot = (self.api.CreateToolhelp32Snapshot.unwrap())(2, 0); // TH32CS_SNAPPROCESS
+            let snapshot = (self.api.CreateToolhelp32Snapshot.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "CreateToolhelp32Snapshot not available"))?)(2, 0); // TH32CS_SNAPPROCESS
             if snapshot.is_null() || snapshot == INVALID_HANDLE_VALUE {
                 return Err(io::Error::last_os_error());
             }
@@ -74,18 +74,18 @@ impl SystemOps for Win32System {
             pe.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
 
             let mut procs = Vec::new();
-            if (self.api.Process32FirstW.unwrap())(snapshot, &mut pe as *mut _ as LPPROCESSENTRY32W) != 0 {
+            if (self.api.Process32FirstW.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Process32FirstW not available"))?)(snapshot, &mut pe as *mut _ as LPPROCESSENTRY32W) != 0 {
                 loop {
                     let name = self.wide_to_string(&pe.szExeFile);
                     procs.push((pe.th32ProcessID, pe.th32ParentProcessID, name));
 
-                    if (self.api.Process32NextW.unwrap())(snapshot, &mut pe as *mut _ as LPPROCESSENTRY32W) == 0 {
+                    if (self.api.Process32NextW.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Process32NextW not available"))?)(snapshot, &mut pe as *mut _ as LPPROCESSENTRY32W) == 0 {
                         break;
                     }
                 }
             }
 
-            (self.api.CloseHandle.unwrap())(snapshot);
+            (self.api.CloseHandle.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "CloseHandle not available"))?)(snapshot);
             Ok(procs)
         }
     }
@@ -94,10 +94,10 @@ impl SystemOps for Win32System {
         // Enumerate handles via NtQuerySystemInformation (SystemHandleInformation = 16)
         let mut buf = vec![0u8; 1024 * 1024];
         let mut ret_len: u32 = 0;
-        let mut status = unsafe { (self.api.NtQuerySystemInformation.unwrap())(16, buf.as_mut_ptr() as *mut _, buf.len() as u32, &mut ret_len) };
+        let mut status = unsafe { (self.api.NtQuerySystemInformation.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "NtQuerySystemInformation not available"))?)(16, buf.as_mut_ptr() as *mut _, buf.len() as u32, &mut ret_len) };
         if status == 0xC0000004u32 as i32 { // STATUS_INFO_LENGTH_MISMATCH
             buf.resize(ret_len as usize, 0);
-            status = unsafe { (self.api.NtQuerySystemInformation.unwrap())(16, buf.as_mut_ptr() as *mut _, buf.len() as u32, &mut ret_len) };
+            status = unsafe { (self.api.NtQuerySystemInformation.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "NtQuerySystemInformation not available"))?)(16, buf.as_mut_ptr() as *mut _, buf.len() as u32, &mut ret_len) };
         }
         if status != 0 {
             return Err(io::Error::from_raw_os_error(status as i32));
@@ -118,36 +118,36 @@ impl SystemOps for Win32System {
 
     fn process_cmdline(&self, pid: u32) -> Result<String, io::Error> {
         unsafe {
-            let handle = (self.api.OpenProcess.unwrap())(0x0010, 0, pid);
+            let handle = (self.api.OpenProcess.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "OpenProcess not available"))?)(0x0010, 0, pid);
             if handle.is_null() { return Err(io::Error::last_os_error()); }
             
             let mut pbi: PROCESS_BASIC_INFORMATION = std::mem::zeroed();
             let mut ret_len: u32 = 0;
-            let status = (self.api.NtQueryInformationProcess.unwrap())(handle, 0, &mut pbi as *mut _ as *mut _, std::mem::size_of::<PROCESS_BASIC_INFORMATION>() as u32, &mut ret_len);
+            let status = (self.api.NtQueryInformationProcess.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "NtQueryInformationProcess not available"))?)(handle, 0, &mut pbi as *mut _ as *mut _, std::mem::size_of::<PROCESS_BASIC_INFORMATION>() as u32, &mut ret_len);
             
             if status != 0 {
-                (self.api.CloseHandle.unwrap())(handle);
+                (self.api.CloseHandle.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "CloseHandle not available"))?)(handle);
                 return Err(io::Error::from_raw_os_error(status as i32));
             }
             
             // This requires reading PEB + parameters which is architecture-dependent.
             // Simplified for now, just indicating it's not implemented yet.
-            (self.api.CloseHandle.unwrap())(handle);
+            (self.api.CloseHandle.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "CloseHandle not available"))?)(handle);
             Ok("Command line not fully implemented".to_string())
         }
     }
 
     fn read_process_memory(&self, pid: u32, addr: u64, buf: &mut [u8]) -> Result<usize, io::Error> {
         unsafe {
-            let handle = (self.api.OpenProcess.unwrap())(0x0010 | 0x0020, 0, pid); // PROCESS_VM_READ | PROCESS_VM_WRITE
+            let handle = (self.api.OpenProcess.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "OpenProcess not available"))?)(0x0010 | 0x0020, 0, pid); // PROCESS_VM_READ | PROCESS_VM_WRITE
             if handle.is_null() {
                 return Err(io::Error::last_os_error());
             }
             let mut read: usize = 0;
-            let ret = (self.api.ReadProcessMemory.unwrap())(
+            let ret = (self.api.ReadProcessMemory.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "ReadProcessMemory not available"))?)(
                 handle, addr as LPCVOID, buf.as_mut_ptr() as LPVOID, buf.len(), &mut read
             );
-            (self.api.CloseHandle.unwrap())(handle);
+            (self.api.CloseHandle.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "CloseHandle not available"))?)(handle);
             if ret == 0 {
                 Err(io::Error::last_os_error())
             } else {
@@ -161,7 +161,7 @@ impl SystemOps for Win32System {
 
         unsafe {
             let mut si: SYSTEM_INFO = std::mem::zeroed();
-            (self.api.GetSystemInfo.unwrap())(&mut si as *mut _ as LPSYSTEM_INFO);
+            (self.api.GetSystemInfo.expect("GetSystemInfo not available"))(&mut si as *mut _ as LPSYSTEM_INFO);
             info.cpu_count = si.dwNumberOfProcessors;
             info.architecture = match si.wProcessorArchitecture {
                 0 => "x86",
@@ -173,7 +173,7 @@ impl SystemOps for Win32System {
             }.to_string();
 
             let mut buf = [0u16; 260];
-            let len = (self.api.GetComputerNameExW.unwrap())(
+            let len = (self.api.GetComputerNameExW.expect("GetComputerNameExW not available"))(
                 5, // ComputerNamePhysicalDnsHostname
                 buf.as_mut_ptr(), &mut (buf.len() as u32)
             );
@@ -188,7 +188,7 @@ impl SystemOps for Win32System {
 
     fn boot_time(&self) -> Result<u64, io::Error> {
         // Use GetTickCount to approximate boot time
-        let ms = unsafe { (self.api.GetTickCount.unwrap())() };
+        let ms = unsafe { (self.api.GetTickCount.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "GetTickCount not available"))?)() };
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -203,10 +203,10 @@ impl SystemOps for Win32System {
     fn loaded_modules(&self) -> Result<Vec<KernelModuleInfo>, io::Error> {
         let mut buf = vec![0u8; 1024 * 1024];
         let mut ret_len: u32 = 0;
-        let mut status = unsafe { (self.api.NtQuerySystemInformation.unwrap())(11, buf.as_mut_ptr() as *mut _, buf.len() as u32, &mut ret_len) };
+        let mut status = unsafe { (self.api.NtQuerySystemInformation.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "NtQuerySystemInformation not available"))?)(11, buf.as_mut_ptr() as *mut _, buf.len() as u32, &mut ret_len) };
         if status == 0xC0000004u32 as i32 { // STATUS_INFO_LENGTH_MISMATCH
             buf.resize(ret_len as usize, 0);
-            status = unsafe { (self.api.NtQuerySystemInformation.unwrap())(11, buf.as_mut_ptr() as *mut _, buf.len() as u32, &mut ret_len) };
+            status = unsafe { (self.api.NtQuerySystemInformation.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "NtQuerySystemInformation not available"))?)(11, buf.as_mut_ptr() as *mut _, buf.len() as u32, &mut ret_len) };
         }
         if status != 0 {
             return Err(io::Error::from_raw_os_error(status as i32));
@@ -232,24 +232,24 @@ impl SystemOps for Win32System {
 
     fn loaded_libraries(&self) -> Result<Vec<LibraryInfo>, io::Error> {
         unsafe {
-            let pid = (self.api.GetCurrentProcessId.unwrap())();
-            let handle = (self.api.OpenProcess.unwrap())(0x0400 | 0x0010, 0, pid); // PROCESS_QUERY_INFORMATION | PROCESS_VM_READ
+            let pid = (self.api.GetCurrentProcessId.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "GetCurrentProcessId not available"))?)();
+            let handle = (self.api.OpenProcess.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "OpenProcess not available"))?)(0x0400 | 0x0010, 0, pid); // PROCESS_QUERY_INFORMATION | PROCESS_VM_READ
             if handle.is_null() {
                 return Err(io::Error::last_os_error());
             }
 
             let mut needed: u32 = 0;
-            if (self.api.EnumProcessModules.unwrap())(handle, std::ptr::null_mut(), 0, &mut needed) == 0 {
-                (self.api.CloseHandle.unwrap())(handle);
+            if (self.api.EnumProcessModules.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "EnumProcessModules not available"))?)(handle, std::ptr::null_mut(), 0, &mut needed) == 0 {
+                (self.api.CloseHandle.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "CloseHandle not available"))?)(handle);
                 return Err(io::Error::last_os_error());
             }
 
             let count = (needed as usize) / std::mem::size_of::<HMODULE>();
             let mut modules: Vec<HMODULE> = vec![std::ptr::null_mut(); count];
-            if (self.api.EnumProcessModules.unwrap())(
+            if (self.api.EnumProcessModules.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "EnumProcessModules not available"))?)(
                 handle, modules.as_mut_ptr(), needed, &mut needed
             ) == 0 {
-                (self.api.CloseHandle.unwrap())(handle);
+                (self.api.CloseHandle.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "CloseHandle not available"))?)(handle);
                 return Err(io::Error::last_os_error());
             }
 
@@ -258,7 +258,7 @@ impl SystemOps for Win32System {
                 if hmod.is_null() { continue; }
 
                 let mut name_buf = [0u16; 260];
-                let name_len = (self.api.GetModuleBaseNameW.unwrap())(
+                let name_len = (self.api.GetModuleBaseNameW.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "GetModuleBaseNameW not available"))?)(
                     handle, hmod, name_buf.as_mut_ptr(), name_buf.len() as u32
                 );
                 let name = if name_len > 0 {
@@ -268,7 +268,7 @@ impl SystemOps for Win32System {
                 };
 
                 let mut path_buf = [0u16; 260];
-                let path_len = (self.api.GetModuleFileNameExW.unwrap())(
+                let path_len = (self.api.GetModuleFileNameExW.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "GetModuleFileNameExW not available"))?)(
                     handle, hmod, path_buf.as_mut_ptr(), path_buf.len() as u32
                 );
                 let path = if path_len > 0 {
@@ -285,7 +285,7 @@ impl SystemOps for Win32System {
                 });
             }
 
-            (self.api.CloseHandle.unwrap())(handle);
+            (self.api.CloseHandle.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "CloseHandle not available"))?)(handle);
             Ok(libs)
         }
     }
@@ -293,7 +293,7 @@ impl SystemOps for Win32System {
     fn mounts(&self) -> Result<Vec<MountInfo>, io::Error> {
         unsafe {
             let mut drives = vec![0u16; 256];
-            let len = (self.api.GetLogicalDriveStringsW.unwrap())(drives.len() as u32, drives.as_mut_ptr());
+            let len = (self.api.GetLogicalDriveStringsW.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "GetLogicalDriveStringsW not available"))?)(drives.len() as u32, drives.as_mut_ptr());
             if len == 0 {
                 return Err(io::Error::last_os_error());
             }
@@ -303,7 +303,7 @@ impl SystemOps for Win32System {
             while i < len as usize && drives[i] != 0 {
                 let drive = &drives[i..];
                 let name = self.wide_to_string(drive);
-                let drive_type = (self.api.GetDriveTypeW.unwrap())(drive.as_ptr());
+                let drive_type = (self.api.GetDriveTypeW.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "GetDriveTypeW not available"))?)(drive.as_ptr());
                 let fstype = match drive_type {
                     2 => "REMOVABLE",
                     3 => "FIXED",
@@ -328,7 +328,7 @@ impl SystemOps for Win32System {
 
     fn device_info(&self) -> Result<DeviceList, io::Error> {
         unsafe {
-            let hdev = (self.api.SetupDiGetClassDevsA.unwrap())(
+            let hdev = (self.api.SetupDiGetClassDevsA.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "SetupDiGetClassDevsA not available"))?)(
                 std::ptr::null(), // All classes
                 std::ptr::null(),
                 std::ptr::null_mut(),
@@ -344,7 +344,7 @@ impl SystemOps for Win32System {
                 let mut devinfo: SP_DEVINFO_DATA = std::mem::zeroed();
                 devinfo.cbSize = std::mem::size_of::<SP_DEVINFO_DATA>() as u32;
 
-                if (self.api.SetupDiEnumDeviceInfo.unwrap())(hdev, index, &mut devinfo as *mut _ as PSP_DEVINFO_DATA) == 0 {
+                if (self.api.SetupDiEnumDeviceInfo.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "SetupDiEnumDeviceInfo not available"))?)(hdev, index, &mut devinfo as *mut _ as PSP_DEVINFO_DATA) == 0 {
                     break;
                 }
 
@@ -352,7 +352,7 @@ impl SystemOps for Win32System {
                 let mut data_type: u32 = 0;
                 let mut size: u32 = 0;
                 // SPDRP_HARDWAREID = 0x00000001
-                if (self.api.SetupDiGetDeviceRegistryPropertyA.unwrap())(
+                if (self.api.SetupDiGetDeviceRegistryPropertyA.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "SetupDiGetDeviceRegistryPropertyA not available"))?)(
                     hdev, &mut devinfo as *mut _ as PSP_DEVINFO_DATA,
                     0x00000001, &mut data_type, buf.as_mut_ptr(), buf.len() as u32, &mut size
                 ) != 0 {
@@ -370,14 +370,14 @@ impl SystemOps for Win32System {
                 index += 1;
             }
 
-            (self.api.SetupDiDestroyDeviceInfoList.unwrap())(hdev);
+            (self.api.SetupDiDestroyDeviceInfoList.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "SetupDiDestroyDeviceInfoList not available"))?)(hdev);
             Ok(list)
         }
     }
 
     fn services(&self) -> Result<Vec<ServiceInfo>, io::Error> {
         unsafe {
-            let scm = (self.api.OpenSCManagerA.unwrap())(
+            let scm = (self.api.OpenSCManagerA.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "OpenSCManagerA not available"))?)(
                 std::ptr::null(), std::ptr::null(), 0x0002 | 0x0004 // SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE
             );
             if scm.is_null() {
@@ -388,12 +388,12 @@ impl SystemOps for Win32System {
             let mut needed: u32 = 0;
             let mut returned: u32 = 0;
 
-            if (self.api.EnumServicesStatusA.unwrap())(
+            if (self.api.EnumServicesStatusA.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "EnumServicesStatusA not available"))?)(
                 scm, 3, 0x00000030, // SERVICE_WIN32 | SERVICE_DRIVER
                 buf.as_mut_ptr() as LPENUM_SERVICE_STATUSA, buf.len() as u32,
                 &mut needed, &mut returned, std::ptr::null_mut()
             ) == 0 {
-                (self.api.CloseServiceHandle.unwrap())(scm);
+                (self.api.CloseServiceHandle.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "CloseServiceHandle not available"))?)(scm);
                 return Err(io::Error::last_os_error());
             }
 
@@ -438,7 +438,7 @@ impl SystemOps for Win32System {
                 });
             }
 
-            (self.api.CloseServiceHandle.unwrap())(scm);
+            (self.api.CloseServiceHandle.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "CloseServiceHandle not available"))?)(scm);
             Ok(services)
         }
     }
@@ -446,25 +446,25 @@ impl SystemOps for Win32System {
     fn has_debug_privilege(&self) -> bool {
         unsafe {
             let token: HANDLE = std::ptr::null_mut();
-            let process = (self.api.GetCurrentProcess.unwrap())();
-            if (self.api.OpenProcessToken.unwrap())(process, 0x0008, &token as *const _ as PHANDLE) == 0 {
+            let process = (self.api.GetCurrentProcess.expect("GetCurrentProcess not available"))();
+            if (self.api.OpenProcessToken.expect("OpenProcessToken not available"))(process, 0x0008, &token as *const _ as PHANDLE) == 0 {
                 return false;
             }
             // TOKEN_QUERY = 0x0008
             let mut buf = [0u8; 256];
             let mut len: u32 = 0;
-            let ret = (self.api.GetTokenInformation.unwrap())(
+            let ret = (self.api.GetTokenInformation.expect("GetTokenInformation not available"))(
                 token, 20, // TokenElevation
                 buf.as_mut_ptr() as LPVOID, buf.len() as u32, &mut len
             );
-            (self.api.CloseHandle.unwrap())(token);
+            (self.api.CloseHandle.expect("CloseHandle not available"))(token);
             ret != 0 && len >= 4 && u32::from_le_bytes(buf[..4].try_into().unwrap()) != 0
         }
     }
 
     fn mmap_anon(&self, size: usize) -> Result<*mut u8, io::Error> {
         unsafe {
-            let addr = (self.api.VirtualAlloc.unwrap())(
+            let addr = (self.api.VirtualAlloc.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "VirtualAlloc not available"))?)(
                 std::ptr::null_mut(), size, 0x1000, 0x04 // MEM_COMMIT | PAGE_READWRITE
             );
             if addr.is_null() {
@@ -477,7 +477,7 @@ impl SystemOps for Win32System {
 
     fn munmap(&self, addr: *mut u8, size: usize) -> Result<(), io::Error> {
         unsafe {
-            let ret = (self.api.VirtualFree.unwrap())(addr as LPVOID, size, 0x8000); // MEM_RELEASE
+            let ret = (self.api.VirtualFree.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "VirtualFree not available"))?)(addr as LPVOID, size, 0x8000); // MEM_RELEASE
             if ret == 0 {
                 Err(io::Error::last_os_error())
             } else {
@@ -490,7 +490,7 @@ impl SystemOps for Win32System {
         unsafe {
             let mut buf = [0u16; 260];
             let mut len = buf.len() as u32;
-            if (self.api.GetComputerNameExW.unwrap())(
+            if (self.api.GetComputerNameExW.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "GetComputerNameExW not available"))?)(
                 5, // ComputerNamePhysicalDnsHostname
                 buf.as_mut_ptr(), &mut len
             ) == 0 {

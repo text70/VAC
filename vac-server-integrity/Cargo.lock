@@ -498,6 +498,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vac-daemon-win"
+version = "0.1.0"
+dependencies = [
+ "vac-client-core",
+ "vac-core",
+ "vac-crypto",
+ "vac-sys",
+]
+
+[[package]]
 name = "vac-integrity"
 version = "0.1.0"
 dependencies = [

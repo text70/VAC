@@ -2,8 +2,8 @@ use std::fs;
 use std::thread;
 use std::time::Duration;
 
-fn load_key(path: &str) -> Vec<u8> {
-    let full = format!("/keys/{}", path);
+fn load_key(dir: &str, name: &str) -> Vec<u8> {
+    let full = format!("{}/{}", dir.trim_end_matches('/'), name);
     fs::read(&full).unwrap_or_else(|e| panic!("Failed to load {}: {}", full, e))
 }
 
@@ -18,17 +18,18 @@ fn register_player(sid: u64, n: u64) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let port: u16 = if args.len() > 1 {
-        args[1].parse().expect("Usage: test-listener [port]")
+    let key_dir = if args.len() > 1 { &args[1] } else { "/keys" };
+    let port: u16 = if args.len() > 2 {
+        args[2].parse().expect("Usage: test-listener [key_dir] [port]")
     } else {
         28084
     };
 
-    eprintln!("[test-listener] Loading PQC keys from /keys/ ...");
-    let kyber_pk = load_key("kyber_public.der");
-    let kyber_sk = load_key("kyber_secret.der");
-    let mldsa65_pk = load_key("mldsa65_public.der");
-    let mldsa65_sk = load_key("mldsa65_secret.der");
+    eprintln!("[test-listener] Loading PQC keys from {} ...", key_dir);
+    let kyber_pk = load_key(key_dir, "kyber_public.der");
+    let kyber_sk = load_key(key_dir, "kyber_secret.der");
+    let mldsa65_pk = load_key(key_dir, "mldsa65_public.der");
+    let mldsa65_sk = load_key(key_dir, "mldsa65_secret.der");
 
     eprintln!("[test-listener] Initializing VAC...");
     vac_integrity::vac_init_rs(&kyber_pk, &mldsa65_sk, &kyber_sk, &mldsa65_pk)

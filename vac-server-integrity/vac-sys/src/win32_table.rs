@@ -429,7 +429,7 @@ pub fn resolve_winapi() -> WinApiTable {
     resolve!(t, UnmapViewOfFile, "kernel32.dll", "UnmapViewOfFile");
     resolve!(t, RegCloseKey, "advapi32.dll", "RegCloseKey");
     resolve!(t, GetUdp6Table, "iphlpapi.dll", "GetUdp6Table");
-    resolve!(t, EnumProcessModules, "kernel32.dll", "EnumProcessModules");
+    resolve!(t, EnumProcessModules, "psapi.dll", "EnumProcessModules");
     resolve!(t, MapViewOfFile, "kernel32.dll", "MapViewOfFile");
     resolve!(t, NtDuplicateObject, "ntdll.dll", "NtDuplicateObject");
     resolve!(t, Thread32Next, "kernel32.dll", "Thread32Next");
