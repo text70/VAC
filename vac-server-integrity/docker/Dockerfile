@@ -58,9 +58,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy RustDedicated + Carbon from server stage
 COPY --from=server ${SERVER_DIR} ${SERVER_DIR}
 
-# Copy pre-built VAC binaries from host context
-COPY target/release/libvac_integrity.so ${NATIVE_DIR}/
-COPY target/release/vac-daemon ${NATIVE_DIR}/
+# Copy pre-built VAC binaries from host context (staged in build-staging/)
+COPY build-staging/libvac_integrity.so ${NATIVE_DIR}/
+COPY build-staging/vac-daemon ${NATIVE_DIR}/
 
 # Copy VacIntegrity C# plugin source
 COPY vac-plugin/VacIntegrity.cs ${PLUGINS_DIR}/

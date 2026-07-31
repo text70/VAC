@@ -58,7 +58,17 @@ fi
 sudo insmod kmod/vac.ko
 sudo chmod 666 /dev/vac
 
-# 5. Build generator and setup keys
+# 5. Build VAC binaries and stage them for container build
+echo "--- Building VAC binaries ---"
+cd "$ROOT_DIR"
+cargo build --release -p vac-integrity -p vac-daemon
+
+echo "--- Staging binaries for container build ---"
+mkdir -p "$ROOT_DIR/docker/build-staging"
+cp target/release/libvac_integrity.so "$ROOT_DIR/docker/build-staging/"
+cp target/release/vac-daemon "$ROOT_DIR/docker/build-staging/"
+
+# 6. Build generator and setup keys
 echo "--- Building key generator ---"
 cd "$ROOT_DIR"
 cargo build --release -p gen-keys
@@ -80,6 +90,9 @@ sudo chmod 600 /etc/vac/keys/*.der
 echo "--- Deploying containers ---"
 cd "$ROOT_DIR/docker"
 podman-compose up -d --build
+
+# Clean up staging directory
+rm -rf "$ROOT_DIR/docker/build-staging"
 
 echo "=== Deployment Complete ==="
 echo "VAC Integrity is running."
