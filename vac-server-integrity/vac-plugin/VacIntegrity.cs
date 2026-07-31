@@ -1,11 +1,10 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using Carbon.Plugins;
@@ -97,9 +96,20 @@ namespace Carbon.Plugins
         private const int DownloadPort = 28085;
         private readonly Dictionary<ulong, DateTime> _playerConnectTime = new Dictionary<ulong, DateTime>();
 
+        // HTTP download server hardening
+        private const int HttpMaxConcurrent = 16;
+        private const int HttpMaxHeaderBytes = 4096;
+        private const int HttpStreamBuffer = 65536;
+        private const int HttpSocketTimeoutMs = 15000;
+        private const int HttpMaxBodyBytes = 512 * 1024 * 1024;
+        private static readonly HashSet<string> AllowedInstallers =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "/vac-setup.exe", "/" };
+
         // HTTP download server
         private Thread _httpServerThread;
         private volatile bool _httpServerRunning;
+        private TcpListener _httpListener;
+        private readonly SemaphoreSlim _httpSlots = new SemaphoreSlim(HttpMaxConcurrent);
 
         // -----------------------------------------------------------------------
         // Hook: server initialized
@@ -172,7 +182,8 @@ namespace Carbon.Plugins
 
                 try
                 {
-                    var listener = new TcpListener(System.Net.IPAddress.Any, DownloadPort);
+                    var listener = new TcpListener(IPAddress.Any, DownloadPort);
+                    _httpListener = listener;
                     listener.Start();
                     Logger.Log("VacIntegrity: download server on port " + DownloadPort);
 
@@ -188,51 +199,28 @@ namespace Carbon.Plugins
                             break;
                         }
 
-                        using (client)
+                        if (!_httpSlots.Wait(0))
                         {
-                            var stream = client.GetStream();
-                            var buf = new byte[4096];
-                            int read = stream.Read(buf, 0, buf.Length);
-                            if (read <= 0) continue;
-
-                            string request = Encoding.ASCII.GetString(buf, 0, read);
-                            bool isInstaller = request.StartsWith("GET /vac-setup.exe");
-
-                            string response;
-                            byte[] body;
-
-                            if (isInstaller && File.Exists(installerPath))
-                            {
-                                byte[] fileBytes = File.ReadAllBytes(installerPath);
-                                response = "HTTP/1.1 200 OK\r\n" +
-                                    "Content-Type: application/octet-stream\r\n" +
-                                    "Content-Disposition: attachment; filename=vac-setup.exe\r\n" +
-                                    "Content-Length: " + fileBytes.Length + "\r\n" +
-                                    "Connection: close\r\n\r\n";
-                                byte[] header = Encoding.ASCII.GetBytes(response);
-                                stream.Write(header, 0, header.Length);
-                                stream.Write(fileBytes, 0, fileBytes.Length);
-                            }
-                            else
-                            {
-                                string bodyText = "<html><body>" +
-                                    "<h2>VAC Anti-Cheat Client</h2>" +
-                                    "<p><a href='/vac-setup.exe'>Download Windows Client</a></p>" +
-                                    "<p><small>Install and run to play on this server.</small></p>" +
-                                    "</body></html>";
-                                body = Encoding.UTF8.GetBytes(bodyText);
-                                response = "HTTP/1.1 200 OK\r\n" +
-                                    "Content-Type: text/html\r\n" +
-                                    "Content-Length: " + body.Length + "\r\n" +
-                                    "Connection: close\r\n\r\n";
-                                byte[] header = Encoding.ASCII.GetBytes(response);
-                                stream.Write(header, 0, header.Length);
-                                stream.Write(body, 0, body.Length);
-                            }
+                            client.Close();
+                            continue;
                         }
+
+                        ThreadPool.QueueUserWorkItem(_ =>
+                        {
+                            try
+                            {
+                                HandleHttpClient(client, installerPath);
+                            }
+                            finally
+                            {
+                                _httpSlots.Release();
+                            }
+                        });
                     }
 
                     listener.Stop();
+                    if (ReferenceEquals(_httpListener, listener))
+                        _httpListener = null;
                 }
                 catch (Exception e)
                 {
@@ -241,6 +229,152 @@ namespace Carbon.Plugins
             })
             { IsBackground = true };
             _httpServerThread.Start();
+        }
+
+        private void HandleHttpClient(TcpClient client, string installerPath)
+        {
+            try
+            {
+                using (client)
+                {
+                    client.ReceiveTimeout = HttpSocketTimeoutMs;
+                    client.SendTimeout = HttpSocketTimeoutMs;
+
+                    var stream = client.GetStream();
+                    byte[] headerBytes = ReadRequestHead(stream);
+                    if (headerBytes == null)
+                        return;
+
+                    string request = Encoding.ASCII.GetString(headerBytes);
+                    int lineEnd = request.IndexOf("\r\n");
+                    string requestLine = lineEnd < 0 ? request : request.Substring(0, lineEnd);
+
+                    string[] parts = requestLine.Split(' ');
+                    if (parts.Length < 3 || parts[0] != "GET")
+                    {
+                        WriteResponse(stream, 400, "text/html; charset=utf-8",
+                            "<html><body><h2>400 Bad Request</h2></body></html>");
+                        return;
+                    }
+
+                    string path = parts[1];
+                    if (!AllowedInstallers.Contains(path))
+                    {
+                        WriteResponse(stream, 404, "text/html; charset=utf-8",
+                            "<html><body><h2>404 Not Found</h2></body></html>");
+                        return;
+                    }
+
+                    if (path == "/")
+                    {
+                        string index = "<html><body>" +
+                            "<h2>VAC Anti-Cheat Client</h2>" +
+                            "<p><a href='/vac-setup.exe'>Download Windows Client</a></p>" +
+                            "<p><small>Install and run to play on this server.</small></p>" +
+                            "</body></html>";
+                        WriteResponse(stream, 200, "text/html; charset=utf-8", index);
+                        return;
+                    }
+
+                    if (!File.Exists(installerPath))
+                    {
+                        WriteResponse(stream, 404, "text/html; charset=utf-8",
+                            "<html><body><h2>404 vac-setup.exe not available</h2></body></html>");
+                        return;
+                    }
+
+                    var info = new FileInfo(installerPath);
+                    if (info.Length <= 0 || info.Length > HttpMaxBodyBytes)
+                    {
+                        WriteResponse(stream, 404, "text/html; charset=utf-8",
+                            "<html><body><h2>404 vac-setup.exe unavailable</h2></body></html>");
+                        return;
+                    }
+
+                    string header = "HTTP/1.1 200 OK\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "Content-Disposition: attachment; filename=vac-setup.exe\r\n" +
+                        "Content-Length: " + info.Length + "\r\n" +
+                        "Cache-Control: no-store\r\n" +
+                        "Connection: close\r\n\r\n";
+                    byte[] headerBytes2 = Encoding.ASCII.GetBytes(header);
+                    stream.Write(headerBytes2, 0, headerBytes2.Length);
+
+                    using (var fs = new FileStream(installerPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    {
+                        var buffer = new byte[HttpStreamBuffer];
+                        int read;
+                        while (_httpServerRunning && (read = fs.Read(buffer, 0, buffer.Length)) > 0)
+                        {
+                            stream.Write(buffer, 0, read);
+                        }
+                    }
+                }
+            }
+            catch (IOException)
+            {
+                // client aborted mid-transfer — expected, no log spam
+            }
+            catch (SocketException)
+            {
+                // client aborted/reset mid-transfer — expected
+            }
+            catch (Exception e)
+            {
+                Logger.Warn("VacIntegrity: HTTP client error: " + e.Message);
+            }
+        }
+
+        private static byte[] ReadRequestHead(Stream stream)
+        {
+            var buffer = new byte[HttpMaxHeaderBytes];
+            int total = 0;
+            while (total < HttpMaxHeaderBytes)
+            {
+                int read = stream.Read(buffer, total, HttpMaxHeaderBytes - total);
+                if (read <= 0)
+                    return null;
+
+                total += read;
+                if (ContainsHeaderEnd(buffer, total))
+                    return buffer;
+            }
+            return null;
+        }
+
+        private static bool ContainsHeaderEnd(byte[] buf, int len)
+        {
+            for (int i = 0; i <= len - 4; i++)
+            {
+                if (buf[i] == (byte)'\r' && buf[i + 1] == (byte)'\n' &&
+                    buf[i + 2] == (byte)'\r' && buf[i + 3] == (byte)'\n')
+                    return true;
+            }
+            return false;
+        }
+
+        private static void WriteResponse(NetworkStream stream, int status, string contentType, string body)
+        {
+            byte[] bodyBytes = Encoding.UTF8.GetBytes(body);
+            string header = "HTTP/1.1 " + status + " " + StatusText(status) + "\r\n" +
+                "Content-Type: " + contentType + "\r\n" +
+                "Content-Length: " + bodyBytes.Length + "\r\n" +
+                "Cache-Control: no-store\r\n" +
+                "Connection: close\r\n\r\n";
+            byte[] headerBytes = Encoding.ASCII.GetBytes(header);
+            stream.Write(headerBytes, 0, headerBytes.Length);
+            stream.Write(bodyBytes, 0, bodyBytes.Length);
+        }
+
+        private static string StatusText(int status)
+        {
+            switch (status)
+            {
+                case 200: return "OK";
+                case 400: return "Bad Request";
+                case 404: return "Not Found";
+                default: return "Error";
+            }
         }
 
         // -----------------------------------------------------------------------
@@ -489,6 +623,15 @@ namespace Carbon.Plugins
         private void OnServerShutdown()
         {
             _httpServerRunning = false;
+
+            var listener = _httpListener;
+            if (listener != null)
+            {
+                try { listener.Stop(); }
+                catch { }
+                _httpListener = null;
+            }
+
             vac_server_listener_stop();
             vac_shutdown();
             Logger.Log("VacIntegrity: shutdown complete");

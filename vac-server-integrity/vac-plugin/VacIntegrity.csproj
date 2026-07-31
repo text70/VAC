@@ -10,28 +10,20 @@
       <HintPath>refs/Carbon.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Carbon.Common.dll">
+      <HintPath>refs/Carbon.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Carbon.SDK.dll">
       <HintPath>refs/Carbon.SDK.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="Facepunch.UnityEngine.dll">
-      <HintPath>refs/Facepunch.UnityEngine.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="Facepunch.Console.dll">
-      <HintPath>refs/Facepunch.Console.dll</HintPath>
+    <Reference Include="Carbon.Test.dll">
+      <HintPath>refs/Carbon.Test.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Assembly-CSharp.dll">
       <HintPath>refs/Assembly-CSharp.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="UnityEngine.dll">
-      <HintPath>refs/UnityEngine.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="UnityEngine.CoreModule.dll">
-      <HintPath>refs/UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
