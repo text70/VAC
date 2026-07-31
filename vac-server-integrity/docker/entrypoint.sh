@@ -6,6 +6,13 @@ echo "  Server dir: ${SERVER_DIR}"
 echo "  Carbon home: ${CARBON_HOME}"
 echo "  Native dir: ${NATIVE_DIR}"
 
+# Copy VAC files from mount into native dir (so Carbon native libs stay intact)
+VAC_MOUNT="${VAC_MOUNT_DIR:-/server/vac-extra}"
+if [ -d "${VAC_MOUNT}" ]; then
+    echo "  Copying VAC files from ${VAC_MOUNT} to ${NATIVE_DIR} ..."
+    cp -v "${VAC_MOUNT}"/* "${NATIVE_DIR}/" 2>/dev/null || true
+fi
+
 # Verify key material
 if [ ! -f "${NATIVE_DIR}/kyber_public.der" ] || \
    [ ! -f "${NATIVE_DIR}/mldsa65_secret.der" ]; then

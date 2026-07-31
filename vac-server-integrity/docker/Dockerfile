@@ -25,12 +25,6 @@ RUN mkdir -p ${SERVER_DIR} && \
 # Clean steamcmd cache (~500MB)
 RUN rm -rf /root/.local/share/Steam/steamcmd/linux32 /root/Steam/logs
 
-# Remove unused assets to save space
-RUN rm -rf ${SERVER_DIR}/RustDedicated_Data/StreamingAssets/AssetBundles \
-    ${SERVER_DIR}/RustDedicated_Data/StreamingAssets/Resources \
-    ${SERVER_DIR}/RustDedicated_Data/StreamingAssets/Standard Assets \
-    ${SERVER_DIR}/RustDedicated_Data/StreamingAssets/unity\ default\ resources
-
 # Install Carbon mod
 ENV CARBON_VERSION=production_build
 RUN CARBON_URL="https://github.com/CarbonCommunity/Carbon/releases/download/${CARBON_VERSION}/Carbon.Linux.Release.tar.gz" && \
@@ -58,9 +52,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy RustDedicated + Carbon from server stage
 COPY --from=server ${SERVER_DIR} ${SERVER_DIR}
 
-# Copy pre-built VAC binaries from host context (staged in build-staging/)
-COPY build-staging/libvac_integrity.so ${NATIVE_DIR}/
-COPY build-staging/vac-daemon ${NATIVE_DIR}/
+# Copy pre-built VAC binaries from host context (staged in docker/build-staging/)
+COPY docker/build-staging/libvac_integrity.so ${NATIVE_DIR}/
+COPY docker/build-staging/vac-daemon ${NATIVE_DIR}/
 
 # Copy VacIntegrity C# plugin source
 COPY vac-plugin/VacIntegrity.cs ${PLUGINS_DIR}/
@@ -71,8 +65,8 @@ RUN chmod +x /entrypoint.sh
 
 WORKDIR ${SERVER_DIR}
 
-EXPOSE 28015/udp  # Game port (client connections)
-EXPOSE 28082/tcp  # Query / RCON port
-EXPOSE 28084/tcp  # VAC daemon listener (client scan results)
+EXPOSE 28015/udp
+EXPOSE 28082/tcp
+EXPOSE 28084/tcp
 
 ENTRYPOINT ["/entrypoint.sh"]

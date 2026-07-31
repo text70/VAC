@@ -68,9 +68,6 @@ namespace Carbon.Plugins
         [DllImport("libvac_integrity", CallingConvention = CallingConvention.Cdecl)]
         private static extern int vac_server_set_kick_callback(IntPtr callback);
 
-        [DllImport("libvac_integrity", CallingConvention = CallingConvention.Cdecl)]
-        private static extern int vac_server_listener_register_client_scan_event(IntPtr callback);
-
         // -----------------------------------------------------------------------
         // Plugin state
         // -----------------------------------------------------------------------
@@ -148,7 +145,7 @@ namespace Carbon.Plugins
 
             // Find the player by Steam ID and enforce ban
             BasePlayer player = BasePlayer.FindByID(steamId);
-            if (player != null && player.isConnected)
+            if (player != null && player.IsConnected)
             {
                 // Kick
                 player.Kick("VAC: " + reason);
