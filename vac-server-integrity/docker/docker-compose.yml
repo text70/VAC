@@ -11,7 +11,7 @@ services:
       - "28084:28084/tcp"   # VAC daemon listener (client scan results)
     volumes:
       - rust-server-data:/server/server
-      - /tmp/vac-keys:/server/carbon/native:ro
+      - /etc/vac/keys:/server/vac-extra:ro
     devices:
       - /dev/vac:/dev/vac
     restart: unless-stopped

@@ -50,6 +50,33 @@ curl -sL https://raw.githubusercontent.com/text70/VAC/refs/heads/main/vac-server
 
 The script auto-detects root vs sudo and installs all dependencies.
 
+### Deploy flow
+
+1. Installs Rust, kernel headers, podman, podman-compose
+2. Clones repo to `/opt/vac-integrity`
+3. Builds + loads kernel module (`kmod/vac.ko`)
+4. Builds VAC Rust binaries
+5. Generates PQC keys to `/etc/vac/keys/` (also stages `.so` + `vac-daemon` there)
+6. Builds and starts the container via `podman-compose up -d --build`
+7. Mounts `/etc/vac/keys:/server/vac-extra:ro` — the entrypoint copies them into `/server/carbon/native/` to preserve Carbon's native libs
+
+### Requirements
+
+- **RAM**: Minimum 4 GB for map generation. For 2 GB VMs, pre-generate a map save on a capable machine and copy `server/proceduralmap.*.sav` / `server/sv.files.*.db` into the volume (`podman volume inspect docker_rust-server-data` to locate it).
+- **Disk**: 20 GB free (6 GB image + 6 GB steamcmd temp + 2 GB Rust build + overhead)
+- **World size**: Default 4500. For lower-RAM VMs, set worldsize to 1000 by editing `docker/entrypoint.sh` (both `+server.worldsize` and the generated `server.cfg`), then rebuild.
+
+### Transferring image to another host
+
+```bash
+# On build machine:
+podman save vac-test-server | gzip > vac-test-server.tar.gz
+scp vac-test-server.tar.gz root@<target>:/root/
+
+# On target:
+podman load < /root/vac-test-server.tar.gz
+# Then run with the same docker-compose.yml (or podman run directly)
+
 ## SHELL Warning (Podman)
 
 When building with `podman`, you may see:
@@ -131,19 +158,22 @@ have shifted from "prove the system is clean" to "report available trust anchors
 - [x] vac_init/vac_shutdown Rust wrappers
 - [x] gen-keys tool generates all 4 key files
 - [x] test-harness: 17/17 tests pass
-- [x] Docker test server (Implemented/Built container)
-- [x] C# VacIntegrity plugin (Implemented/Template ready)
+- [x] Docker test server (Built container, tested locally + on cloud)
+- [x] C# VacIntegrity plugin (Compiles at runtime under Carbon, kick/ban callbacks work)
 - [x] vac-client-linux (Implemented/Built)
 - [x] vac-client-win (Implemented/Cross-compilable)
 - [x] Kernel module `vac.ko` compiles for kernel 6.x (IOCTL interface: FILL, PROC_LIST, READ_MEM, PROC_NAME)
+- [x] Bug fixes: buffer truncation, plugin symbol mismatch, container namespace, unsync'd static mut, OOM vectors, wire-length caps, unsigned overflow, unscored modules
 - [ ] Kernel module loaded + tested in podman test environment
 
 ## Key Material
 
 ```
-Server (native/):      kyber_public.der  + mldsa65_secret.der
+Server (/etc/vac/keys/ mounted at /server/vac-extra):   kyber_public.der  + mldsa65_secret.der
 Decryption service:    kyber_secret.der  + mldsa65_public.der
 ```
+
+The entrypoint copies keys from the mount into `/server/carbon/native/` alongside the VAC `.so` and `vac-daemon` (which are baked into the image).
 
 ## Wire Format (PQC sealed payload)
 

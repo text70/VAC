@@ -91,7 +91,14 @@ echo "--- Verifying keys created ---"
 ls -la /etc/vac/keys/
 $SUDO chmod 600 /etc/vac/keys/*.der
 
-# 7. Deploy with podman-compose
+# 7. Setup mount directory with keys + VAC binaries
+echo "--- Setting up mount directory /etc/vac/keys ---"
+$SUDO mkdir -p /etc/vac/keys
+cp target/release/libvac_integrity.so target/release/vac-daemon /etc/vac/keys/
+$SUDO chmod 644 /etc/vac/keys/libvac_integrity.so
+$SUDO chmod 755 /etc/vac/keys/vac-daemon
+
+# 8. Deploy with podman-compose
 echo "--- Deploying containers ---"
 cd "$ROOT_DIR/docker"
 podman-compose up -d --build
@@ -100,3 +107,5 @@ rm -rf "$ROOT_DIR/docker/build-staging"
 
 echo "=== Deployment Complete ==="
 echo "VAC Integrity is running."
+echo ""
+echo "Check: podman logs docker_rust-server_1"

@@ -41,13 +41,15 @@ echo "  Plugin: OK"
 cd "${SERVER_DIR}"
 
 # Generate a minimal server config if not present
-if [ ! -f "server/server.cfg" ]; then
-    mkdir -p server
-    cat > server/server.cfg << 'CFG'
+# RustDedicated reads config from server/<identity>/cfg/server.cfg
+IDENTITY_DIR="${SERVER_DIR}/server/server"
+if [ ! -f "${IDENTITY_DIR}/cfg/server.cfg" ]; then
+    mkdir -p "${IDENTITY_DIR}/cfg"
+    cat > "${IDENTITY_DIR}/cfg/server.cfg" << 'CFG'
 server.hostname "VacIntegrity Test Server"
 server.description "VAC Integrity Testing Environment"
-server.maxplayers 10
-server.worldsize 3000
+server.maxplayers 5
+server.worldsize 4500
 server.seed 12345
 server.saveinterval 300
 server.tickrate 30
@@ -69,7 +71,8 @@ exec ./RustDedicated \
     +server.port 28015 \
     +server.level "Procedural Map" \
     +server.seed 12345 \
-    +server.maxplayers 10 \
+    +server.worldsize 4500 \
+    +server.maxplayers 5 \
     +server.hostname "VacIntegrity Test Server" \
     +server.identity "server" \
     +server.saveinterval 300 \
