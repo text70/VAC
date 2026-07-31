@@ -281,6 +281,7 @@ pub struct WinApiTable {
     pub WaitForSingleObject: Option<unsafe extern "system" fn(HANDLE, DWORD) -> DWORD>,
     pub SymFunctionTableAccess64: Option<unsafe extern "system" fn(HANDLE, DWORD64) -> PVOID>,
     pub SetupDiEnumDeviceInfo: Option<unsafe extern "system" fn(HDEVINFO, DWORD, PSP_DEVINFO_DATA) -> BOOL>,
+    pub DeviceIoControl: Option<unsafe extern "system" fn(HANDLE, DWORD, LPVOID, DWORD, LPVOID, DWORD, PDWORD, LPOVERLAPPED) -> BOOL>,
     pub SetLastError: Option<unsafe extern "system" fn(DWORD)>,
     pub GetUdpTable: Option<unsafe extern "system" fn(PMIB_UDPTABLE, PULONG, BOOL) -> ULONG>,
     pub LocalFree: Option<unsafe extern "system" fn(HLOCAL) -> HLOCAL>,
@@ -498,6 +499,7 @@ pub fn resolve_winapi() -> WinApiTable {
     resolve!(t, WaitForSingleObject, "kernel32.dll", "WaitForSingleObject");
     resolve!(t, SymFunctionTableAccess64, "kernel32.dll", "SymFunctionTableAccess64");
     resolve!(t, SetupDiEnumDeviceInfo, "setupapi.dll", "SetupDiEnumDeviceInfo");
+    resolve!(t, DeviceIoControl, "kernel32.dll", "DeviceIoControl");
     resolve!(t, SetLastError, "kernel32.dll", "SetLastError");
     resolve!(t, GetUdpTable, "iphlpapi.dll", "GetUdpTable");
     resolve!(t, LocalFree, "kernel32.dll", "LocalFree");

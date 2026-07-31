@@ -17,6 +17,8 @@ pub mod kmod;
 pub mod win32_table;
 #[cfg(target_os = "windows")]
 pub mod win32;
+#[cfg(target_os = "windows")]
+pub mod win32_kmod;
 
 pub trait SystemOps {
     fn current_process_id(&self) -> u32;

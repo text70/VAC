@@ -502,14 +502,39 @@ impl SystemOps for Win32System {
 
     fn hardware_presence(&self) -> Result<Vec<u8>, io::Error> {
         let mut buf = [0u8; 32];
-        // Simple TPM presence check (no crypto proof; kernel module not applicable on Windows yet)
-        let output = std::process::Command::new("powershell")
-            .args(["-Command", "if (Get-Tpm).TpmPresent { exit 0 } else { exit 1 }"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        buf[0] = if output { 2 } else { 1 };
+        // Check kernel module first
+        if crate::win32_kmod::Win32Kmod::open(&self.api).is_some() {
+            buf[0] = 3; // kernel driver present
+        } else {
+            // Simple TPM presence check (no crypto proof)
+            let output = std::process::Command::new("powershell")
+                .args(["-Command", "if (Get-Tpm).TpmPresent { exit 0 } else { exit 1 }"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            buf[0] = if output { 2 } else { 1 };
+        }
         Ok(buf.to_vec())
+    }
+
+    fn kernel_module_loaded(&self) -> bool {
+        crate::win32_kmod::Win32Kmod::open(&self.api).is_some()
+    }
+
+    fn kernel_proc_list(&self) -> Result<Vec<(u32, u32, String)>, io::Error> {
+        if let Some(kmod) = crate::win32_kmod::Win32Kmod::open(&self.api) {
+            kmod.proc_list()
+        } else {
+            self.enumerate_processes()
+        }
+    }
+
+    fn kernel_read_mem(&self, pid: u32, addr: u64, buf: &mut [u8]) -> Result<usize, io::Error> {
+        if let Some(kmod) = crate::win32_kmod::Win32Kmod::open(&self.api) {
+            kmod.read_mem(pid, addr, buf)
+        } else {
+            self.read_process_memory(pid, addr, buf)
+        }
     }
 }
 

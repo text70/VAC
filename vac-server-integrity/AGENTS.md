@@ -111,6 +111,7 @@ podman build --format docker -t vac-test-server -f docker/Dockerfile .
 | `vac-client-win` | `vac-client-win/` | Windows cdylib exporting vac_client_scan() (cross-compilable) |
 | `vac-plugin` | `vac-plugin/` | Carbon C# plugin (VacIntegrity.dll) |
 | `docker/` | `docker/` | Dockerfile + docker-compose for RustDedicated test server |
+| `kmod-win/` | `kmod-win/` | Windows kernel driver (`vac.sys`) — mirrors `kmod/` for Win10+ clients |
 
 ## Kernel Module
 
@@ -134,6 +135,60 @@ and wraps each IOCTL as a safe Rust method.
 - Kernel module loaded → `kernel_proc_list()` returns ring-0 process list
 - Kernel module not loaded → `kernel_proc_list()` falls back to `enumerate_processes()` (user-mode `/proc/`)
 - This lets the daemon work with or without the driver; server receives a flag indicating which path was used
+
+## Windows Kernel Module (`kmod-win/vac.sys`)
+
+The `kmod-win/` directory contains a Windows WDM driver (`vac.sys`) that mirrors the
+Linux `kmod/vac.ko` interface for Windows 10/11 clients. Same 4 IOCTLs, same struct
+layouts, same capability flags — so the Rust scan code (`Win32SystemOps`) is
+byte-identical regardless of platform.
+
+### IOCTL interface (`kmod-win/vac-ioctl.h`)
+
+| IOCTL | Implementation |
+|-------|---------------|
+| `VAC_IOCTL_FILL` | Returns capability flags (proc_list, read_mem, proc_name) |
+| `VAC_IOCTL_PROC_LIST` | Calls `ZwQuerySystemInformation(SystemProcessInformation)` at ring 0 |
+| `VAC_IOCTL_READ_MEM` | Calls `MmCopyVirtualMemory()` — bypasses user-mode hooks |
+| `VAC_IOCTL_PROC_NAME` | Calls `PsGetProcessImageFileName()` on target EPROCESS |
+
+Rust-side client in `vac-sys/src/win32_kmod.rs` — `Win32Kmod` struct opens `\\.\Vac`
+via `CreateFileW` + `DeviceIoControl`, same API as `VacKmod`.
+
+### Build (requires WDK 10/11)
+
+```bat
+:: From an "x64 Native Tools Command Prompt for VS 2022"
+cd kmod-win
+build.cmd
+:: Output: kmod-win\x64\Release\vac.sys
+```
+
+### Production signing — Attestation (recommended)
+
+1. Purchase an **EV code-signing certificate** (~$200–500/yr from DigiCert, GlobalSign, Sectigo, SSL.com).
+2. Register for the [Microsoft Windows Hardware Developer Program](https://partner.microsoft.com/dashboard/hardware/).
+3. Associate the EV cert with your Partner Center account.
+4. Create a CAB with `vac.sys` + INF, sign the CAB with your EV cert (`signtool sign /fd sha256 /a`).
+5. Submit via Partner Center → select **Attestation signing** (no HLK testing required).
+6. Download the Microsoft-signed result. Works on Win10/11 with Secure Boot enabled for drivers distributed directly (shipped in the client installer, not via Windows Update).
+
+For Windows Update distribution, escalate to **WHCP certification** (requires HLK testing) — attestation-signed drivers cannot be published to Windows Update for retail audiences.
+
+### Installation on test machines
+
+```bat
+bcdedit /set testsigning on
+sc create Vac type= kernel binPath= "C:\path\to\vac.sys"
+sc start Vac
+```
+
+### Rust cross-compile
+
+```bash
+# Build the Rust Win32 client (no .sys needed)
+cargo build --release --target x86_64-pc-windows-gnu -p vac-sys
+```
 
 ## Hardware Presence (replaces TPM Attestation)
 
@@ -163,6 +218,7 @@ have shifted from "prove the system is clean" to "report available trust anchors
 - [x] vac-client-linux (Implemented/Built)
 - [x] vac-client-win (Implemented/Cross-compilable)
 - [x] Kernel module `vac.ko` compiles for kernel 6.x (IOCTL interface: FILL, PROC_LIST, READ_MEM, PROC_NAME)
+- [x] Windows kernel driver `vac.sys` source + `Win32Kmod` Rust client + attestation signing path
 - [x] Bug fixes: buffer truncation, plugin symbol mismatch, container namespace, unsync'd static mut, OOM vectors, wire-length caps, unsigned overflow, unscored modules
 - [ ] Kernel module loaded + tested in podman test environment
 
