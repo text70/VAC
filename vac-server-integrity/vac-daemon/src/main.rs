@@ -35,6 +35,9 @@ fn recv_msg(stream: &mut TcpStream) -> Result<(u8, Vec<u8>), String> {
     let mut len_buf = [0u8; 4];
     read_exact(stream, &mut len_buf)?;
     let msg_len = u32::from_le_bytes(len_buf) as usize;
+    if msg_len == 0 || msg_len > 65536 {
+        return Err("invalid frame length".into());
+    }
     let mut msg = vec![0u8; msg_len];
     read_exact(stream, &mut msg)?;
     let msg_type = msg[0];
@@ -187,35 +190,49 @@ fn handle_server(steam_id: u64, server_addr: &str) -> Result<(), String> {
                         };
                         let user_procs = user_mode_proc_list();
 
-                        let ring0_pids: HashSet<u32> = ring0_procs.iter().map(|(pid, _, _)| *pid).collect();
-                        let user_pids: HashSet<u32> = user_procs.iter().map(|(pid, _)| *pid).collect();
+                        // Verify PID namespace alignment: if kmod is loaded, make sure
+                        // the daemon's own PID exists in the ring-0 list. If not, we're
+                        // running in a different PID namespace (e.g., container) and
+                        // hidden-proc comparison would be meaningless.
+                        let ns_mismatch = if !ring0_procs.is_empty() {
+                            let my_pid = std::process::id();
+                            !ring0_procs.iter().any(|(pid, _, _)| *pid == my_pid)
+                        } else {
+                            false
+                        };
 
-                        let hidden: Vec<_> = ring0_procs.iter()
-                            .filter(|(pid, _, _)| !user_pids.contains(pid))
-                            .collect();
-                        let missing: Vec<_> = user_procs.iter()
-                            .filter(|(pid, _)| !ring0_pids.contains(pid))
-                            .collect();
+                        if ns_mismatch {
+                            eprintln!("[vac-daemon] PID namespace mismatch (daemon PID {} not in ring-0 list), skipping hidden proc check", std::process::id());
+                            raw_payload.extend_from_slice(&0u32.to_le_bytes()); // hidden_count = 0
+                            raw_payload.extend_from_slice(&0u32.to_le_bytes()); // missing_count = 0
+                        } else {
+                            let ring0_pids: HashSet<u32> = ring0_procs.iter().map(|(pid, _, _)| *pid).collect();
+                            let user_pids: HashSet<u32> = user_procs.iter().map(|(pid, _)| *pid).collect();
 
-                        eprintln!("[vac-daemon] Hidden proc check: {} hidden from user, {} missing from ring0",
-                            hidden.len(), missing.len());
+                            let hidden: Vec<_> = ring0_procs.iter()
+                                .filter(|(pid, _, _)| !user_pids.contains(pid))
+                                .collect();
+                            let missing: Vec<_> = user_procs.iter()
+                                .filter(|(pid, _)| !ring0_pids.contains(pid))
+                                .collect();
 
-                        // Layout: hidden_count(u32) + missing_count(u32) +
-                        // [hidden entries: pid(u32) + comm_len(u32) + comm(comm_len)] +
-                        // [missing entries: pid(u32) + comm_len(u32) + comm(comm_len)]
-                        raw_payload.extend_from_slice(&(hidden.len() as u32).to_le_bytes());
-                        raw_payload.extend_from_slice(&(missing.len() as u32).to_le_bytes());
-                        for (pid, _, comm) in &hidden {
-                            raw_payload.extend_from_slice(&pid.to_le_bytes());
-                            let comm_bytes = comm.as_bytes();
-                            raw_payload.extend_from_slice(&(comm_bytes.len() as u32).to_le_bytes());
-                            raw_payload.extend_from_slice(comm_bytes);
-                        }
-                        for (pid, comm) in &missing {
-                            raw_payload.extend_from_slice(&pid.to_le_bytes());
-                            let comm_bytes = comm.as_bytes();
-                            raw_payload.extend_from_slice(&(comm_bytes.len() as u32).to_le_bytes());
-                            raw_payload.extend_from_slice(comm_bytes);
+                            eprintln!("[vac-daemon] Hidden proc check: {} hidden from user, {} missing from ring0",
+                                hidden.len(), missing.len());
+
+                            raw_payload.extend_from_slice(&(hidden.len() as u32).to_le_bytes());
+                            raw_payload.extend_from_slice(&(missing.len() as u32).to_le_bytes());
+                            for (pid, _, comm) in &hidden {
+                                raw_payload.extend_from_slice(&pid.to_le_bytes());
+                                let comm_bytes = comm.as_bytes();
+                                raw_payload.extend_from_slice(&(comm_bytes.len() as u32).to_le_bytes());
+                                raw_payload.extend_from_slice(comm_bytes);
+                            }
+                            for (pid, comm) in &missing {
+                                raw_payload.extend_from_slice(&pid.to_le_bytes());
+                                let comm_bytes = comm.as_bytes();
+                                raw_payload.extend_from_slice(&(comm_bytes.len() as u32).to_le_bytes());
+                                raw_payload.extend_from_slice(comm_bytes);
+                            }
                         }
                     }
                     9 => {

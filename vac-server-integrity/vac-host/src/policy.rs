@@ -31,12 +31,11 @@ pub fn parse_ring0_payload(data: &[u8]) -> Vec<Ring0ProcEntry> {
         return Vec::new();
     }
     let count = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
-    let mut entries = Vec::with_capacity(count);
+    let max_possible = (data.len() - 4) / 24;
+    let safe_count = count.min(max_possible);
+    let mut entries = Vec::with_capacity(safe_count);
     let mut off = 4usize;
-    for _ in 0..count {
-        if off + 24 > data.len() {
-            break;
-        }
+    for _ in 0..safe_count {
         let pid = u32::from_le_bytes(data[off..off + 4].try_into().unwrap());
         let ppid = u32::from_le_bytes(data[off + 4..off + 8].try_into().unwrap());
         let comm_bytes = &data[off + 8..off + 24];

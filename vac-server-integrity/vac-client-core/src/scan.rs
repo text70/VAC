@@ -71,8 +71,8 @@ fn process_scan(sys: &dyn SystemOps, buf: &mut DataBuffer) {
     };
     buf.write_u32(kproc_count);
     
-    // Write hardware presence data (remaining dwords 7-12)
-    for chunk in presence.chunks(4).skip(0).take(6) {
+    // Write hardware presence data (remaining dwords 7-14)
+    for chunk in presence.chunks(4).take(8) {
         let mut val = 0u32;
         for (i, &b) in chunk.iter().enumerate() {
             val |= (b as u32) << (i * 8);

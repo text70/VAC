@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -19,7 +19,7 @@ struct ListenerState {
     registered: Arc<Mutex<HashMap<u64, (String, ScoreState)>>>,
 }
 
-static mut LISTENER: Option<ListenerState> = None;
+static LISTENER: RwLock<Option<ListenerState>> = RwLock::new(None);
 
 const NONCE_LEN: usize = 8;
 
@@ -67,12 +67,13 @@ fn decrypt_result(
             if plaintext.len() < NONCE_LEN {
                 eprintln!("[vac-listener] {} module {}: payload too short (missing nonce)", player_name, mid);
                 state.add_finding(FindingKind::LatencyAnomaly { duration_ms: 0 }, 20);
-            } else {
-                let actual_nonce: [u8; NONCE_LEN] = plaintext[..NONCE_LEN].try_into().unwrap();
-                if actual_nonce != *expected_nonce {
-                    eprintln!("[vac-listener] {} module {}: NONCE MISMATCH — replay attack?", player_name, mid);
-                    state.add_finding(FindingKind::LatencyAnomaly { duration_ms: 0 }, 50);
-                }
+                return start.elapsed();
+            }
+
+            let actual_nonce: [u8; NONCE_LEN] = plaintext[..NONCE_LEN].try_into().unwrap();
+            if actual_nonce != *expected_nonce {
+                eprintln!("[vac-listener] {} module {}: NONCE MISMATCH — replay attack?", player_name, mid);
+                state.add_finding(FindingKind::LatencyAnomaly { duration_ms: 0 }, 50);
             }
 
             let data = &plaintext[NONCE_LEN..];
@@ -126,7 +127,7 @@ fn decrypt_result(
                             if cursor > 6 && buf.raw[6] > 0 {
                                 let count = buf.raw[6];
                                 eprintln!("[vac-listener] {} MODULE 2: {} suspicious processes", player_name, count);
-                                state.add_finding(FindingKind::DebuggerFlags { flags: count }, count * 10);
+                                state.add_finding(FindingKind::DebuggerFlags { flags: count }, count.saturating_mul(10));
                             }
                         }
                         3 => {
@@ -181,6 +182,13 @@ fn analyze_client_module(mid: u32, buf: &DataBuffer, cursor: usize, player_name:
                 state.add_finding(FindingKind::DebuggerFlags { flags: 0x101 }, 20);
             }
         }
+        102 => {
+            if cursor > 0 && buf.raw[0] > 300 {
+                let count = buf.raw[0];
+                eprintln!("[vac-listener] {} MODULE 102: excessive libraries ({})", player_name, count);
+                state.add_finding(FindingKind::SuspiciousEnv { flags: count }, 15);
+            }
+        }
         103 => {
             if cursor > 0 && buf.raw[0] != 0 {
                 let flags = buf.raw[0];
@@ -215,7 +223,7 @@ fn analyze_client_module(mid: u32, buf: &DataBuffer, cursor: usize, player_name:
             if cursor > 0 && buf.raw[0] != 0 {
                 let count = buf.raw[0];
                 eprintln!("[vac-listener] {} MODULE 106: {} cheat procs", player_name, count);
-                state.add_finding(FindingKind::DebuggerFlags { flags: count }, count * 20);
+                state.add_finding(FindingKind::DebuggerFlags { flags: count }, count.saturating_mul(20));
             }
         }
         _ => {}
@@ -231,32 +239,39 @@ fn analyze_hidden_module(buf: &DataBuffer, cursor: usize, player_name: &str, sta
     if hidden_count > 0 {
         eprintln!("[vac-listener] {} MODULE 201: {} processes hidden from user-mode", player_name, hidden_count);
         state.add_finding(FindingKind::HiddenProcess { pid: 0, comm: format!("{} hidden", hidden_count) },
-            hidden_count * policy::POINTS_HIDDEN_PROCESS);
+            hidden_count.saturating_mul(policy::POINTS_HIDDEN_PROCESS));
     }
     if missing_count > 0 {
         eprintln!("[vac-listener] {} MODULE 201: {} processes missing from ring-0", player_name, missing_count);
         state.add_finding(FindingKind::HiddenProcess { pid: 0, comm: format!("{} missing-from-ring0", missing_count) },
-            missing_count * policy::POINTS_MISSING_RING0);
+            missing_count.saturating_mul(policy::POINTS_MISSING_RING0));
     }
 }
 
 fn analyze_memory_module(buf: &DataBuffer, cursor: usize, player_name: &str, state: &mut ScoreState) {
-    if cursor < 3 {
+    if cursor < 4 {
         return;
     }
     let rwx_count = buf.raw[0];
     let anon_exec_count = buf.raw[1];
     let regions_checked = buf.raw[2];
+    let text_mismatches = buf.raw[3];
     if rwx_count > 0 {
         eprintln!("[vac-listener] {} MODULE 202: {} RWX pages (checked {})", player_name, rwx_count, regions_checked);
         state.add_finding(FindingKind::RwxPage { address: 0, size: rwx_count as u64 },
-            rwx_count * policy::POINTS_RWX_PAGE);
+            rwx_count.saturating_mul(policy::POINTS_RWX_PAGE));
     }
     if anon_exec_count > 0 {
         eprintln!("[vac-listener] {} MODULE 202: {} anonymous exec mappings (checked {})",
             player_name, anon_exec_count, regions_checked);
         state.add_finding(FindingKind::AnonymousExec { address: 0, size: anon_exec_count as u64 },
-            anon_exec_count * policy::POINTS_ANON_EXEC);
+            anon_exec_count.saturating_mul(policy::POINTS_ANON_EXEC));
+    }
+    if text_mismatches > 0 {
+        eprintln!("[vac-listener] {} MODULE 202: {} text section hash mismatches (possible code modification)",
+            player_name, text_mismatches);
+        state.add_finding(FindingKind::InjectedAssembly { name: format!("text-mismatch({})", text_mismatches) },
+            text_mismatches.saturating_mul(policy::POINTS_INJECTED_ASSEMBLY));
     }
 }
 
@@ -287,9 +302,10 @@ fn handle_client(mut stream: TcpStream, registered: Arc<Mutex<HashMap<u64, (Stri
     let mut len_buf = [0u8; 4];
     if read_exact(&mut stream, &mut len_buf).is_err() { return; }
     let msg_len = u32::from_le_bytes(len_buf) as usize;
+    if msg_len < 9 || msg_len > 65536 { return; }
     let mut msg = vec![0u8; msg_len];
     if read_exact(&mut stream, &mut msg).is_err() { return; }
-    if msg[0] != 0x01 || msg.len() < 9 { return; }
+    if msg[0] != 0x01 { return; }
 
     let steam_id = u64::from_le_bytes(msg[1..9].try_into().unwrap());
 
@@ -342,6 +358,7 @@ fn handle_client(mut stream: TcpStream, registered: Arc<Mutex<HashMap<u64, (Stri
             return;
         }
         let rmsg_len = u32::from_le_bytes(rlen) as usize;
+        if rmsg_len < 9 || rmsg_len > 65536 { return; }
         let mut rmsg = vec![0u8; rmsg_len];
         if read_exact(&mut stream, &mut rmsg).is_err() { return; }
 
@@ -420,8 +437,8 @@ pub fn start(port: u16) -> bool {
         listener_thread(port, stop_clone, reg_clone);
     });
 
-    unsafe {
-        LISTENER = Some(ListenerState {
+    if let Ok(mut guard) = LISTENER.write() {
+        *guard = Some(ListenerState {
             handle: Some(handle),
             stop_flag: stop,
             registered,
@@ -431,20 +448,21 @@ pub fn start(port: u16) -> bool {
 }
 
 pub fn stop() {
-    unsafe {
-        if let Some(ref mut ls) = LISTENER {
+    if let Ok(mut guard) = LISTENER.write() {
+        if let Some(ref mut ls) = *guard {
             ls.stop_flag.store(true, Ordering::SeqCst);
             if let Some(h) = ls.handle.take() {
                 h.join().ok();
             }
         }
+        *guard = None;
     }
     LISTENER_RUNNING.store(false, Ordering::SeqCst);
 }
 
 pub fn register_client(steam_id: u64, player_name: &str) {
-    unsafe {
-        if let Some(ref ls) = LISTENER {
+    if let Ok(guard) = LISTENER.read() {
+        if let Some(ref ls) = *guard {
             let mut reg = ls.registered.lock().unwrap();
             reg.insert(steam_id, (player_name.to_string(), ScoreState::new()));
         }
@@ -452,8 +470,8 @@ pub fn register_client(steam_id: u64, player_name: &str) {
 }
 
 pub fn unregister_client(steam_id: u64) {
-    unsafe {
-        if let Some(ref ls) = LISTENER {
+    if let Ok(guard) = LISTENER.read() {
+        if let Some(ref ls) = *guard {
             let mut reg = ls.registered.lock().unwrap();
             reg.remove(&steam_id);
         }

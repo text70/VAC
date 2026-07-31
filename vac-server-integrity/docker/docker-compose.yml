@@ -8,6 +8,7 @@ services:
     ports:
       - "28015:28015/udp"   # Game
       - "28082:28082/tcp"   # RCON/App
+      - "28084:28084/tcp"   # VAC daemon listener (client scan results)
     volumes:
       - rust-server-data:/server/server
       - /etc/vac/keys:/server/carbon/native:ro

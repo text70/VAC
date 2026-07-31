@@ -80,7 +80,7 @@ namespace Carbon.Plugins
         private byte[] _mldsa65Sk;
         private byte[] _mldsa65Pk;
 
-        private const int ScanBufferSize = 12617;
+        private const int ScanBufferSize = 12649;
         private const int MaxUints = 2048;
 
         // Keep the delegate alive so the GC doesn't collect it

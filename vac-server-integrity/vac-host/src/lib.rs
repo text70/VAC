@@ -114,8 +114,9 @@ pub extern "C" fn vac_scan(module_id: u32, buffer: *mut u8, len: *mut i32) -> i3
     };
 
     let capacity = unsafe { *len as usize };
+    const PRESENCE_LEN: usize = 32;
     let min_capacity = HEADER_LEN + KYBER_CT_LEN + AES_NONCE_LEN + AES_TAG_LEN
-        + (DATA_BUFFER_DWORDS * 4) + MLDSA_65_SIG_LEN;
+        + (DATA_BUFFER_DWORDS * 4) + PRESENCE_LEN + MLDSA_65_SIG_LEN;
     if capacity < min_capacity || capacity > 65536 {
         return -6;
     }
@@ -283,6 +284,30 @@ pub extern "C" fn vac_decrypt_with_attestation(
             if msg.contains("signature") { 1 } else { 2 }
         }
     }
+}
+
+/// Legacy wrapper: 8-arg vac_decrypt (no attestation output).
+/// Calls vac_decrypt_with_attestation internally with a dummy attestation buffer.
+/// Used by the C# plugin and older callers.
+#[no_mangle]
+pub extern "C" fn vac_decrypt(
+    encrypted: *const u8,
+    encrypted_len: i32,
+    kyber_sk: *const u8,
+    kyber_sk_len: i32,
+    mldsa65_pk: *const u8,
+    mldsa65_pk_len: i32,
+    output: *mut u32,
+    output_dwords: *mut i32,
+) -> i32 {
+    let mut dummy_attestation = [0u8; 32];
+    vac_decrypt_with_attestation(
+        encrypted, encrypted_len,
+        kyber_sk, kyber_sk_len,
+        mldsa65_pk, mldsa65_pk_len,
+        output, output_dwords,
+        dummy_attestation.as_mut_ptr(),
+    )
 }
 
 /// Start the daemon TCP listener on a port.
