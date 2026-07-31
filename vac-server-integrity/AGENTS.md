@@ -166,7 +166,48 @@ build.cmd
 :: Output: kmod-win\x64\Release\vac.sys
 ```
 
-### Production signing — Attestation (recommended)
+### Authenticode signing gate (all Windows build artifacts)
+
+`signing/sign.cmd` is a sign+verify gate applied by `installer/build.cmd` and
+`kmod-win/build.cmd`. It runs via `osslsigncode` (no Windows tooling needed for the
+gate itself) and behaves as follows:
+
+- `VAC_SIGN_P12` **not set** → warn "UNSIGNED", exit 0 (dev builds allowed, no abort).
+- `VAC_SIGN_P12` **set** → sign with the p12, verify, swap `.signed` in place;
+  **exit 1 on any signing/verification failure** (P0 gate: unsigned/tampered artifacts
+  never reach release).
+
+```bat
+:: Dev (self-signed test cert — pipeline testing only, NOT Windows-trusted):
+set VAC_SIGN_P12=signing\test-cert.p12
+set VAC_SIGN_PASS=vac-test
+:: CAfile auto-derived from <p12>.crt (emitted by gen-test-cert.sh); or set explicitly:
+set VAC_SIGN_CAFILE=signing\test-cert.crt
+call installer\build.cmd          :: or: call kmod-win\build.cmd
+
+:: Production (same gate, real identity):
+set VAC_SIGN_P12=C:\path\trusted.p12
+set VAC_SIGN_PASS=...
+set VAC_SIGN_CAFILE=C:\path\chain.crt   :: optional for OS-trusted identities
+```
+
+`osslsigncode verify` fails on self-signed certs unless the leaf cert is passed as
+`-CAfile` (self-signed certs are their own trust anchor). The gate handles this by
+using `VAC_SIGN_CAFILE` or falling back to `%VAC_SIGN_P12%.crt`.
+
+Generate a fresh test cert on Linux with:
+
+```bash
+bash signing/gen-test-cert.sh signing/test-cert.p12   # -> test-cert.p12 + test-cert.crt (pass vac-test)
+```
+
+**TODO (production):** replace the self-signed test cert with **Microsoft Trusted
+Signing** (~$10/mo Azure service, OS-trusted, no EV purchase needed) for user-mode
+binaries, or a real **EV cert** (required for kernel-mode driver attestation signing
+via Partner Center). No gate changes needed — just point `VAC_SIGN_P12` at the real
+identity.
+
+### Production driver signing — Attestation (recommended)
 
 1. Purchase an **EV code-signing certificate** (~$200–500/yr from DigiCert, GlobalSign, Sectigo, SSL.com).
 2. Register for the [Microsoft Windows Hardware Developer Program](https://partner.microsoft.com/dashboard/hardware/).

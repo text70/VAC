@@ -6,6 +6,20 @@ REM
 REM Usage:  build.cmd
 REM Output: x64\Release\vac.sys
 REM         x64\Release\vac.cat  (attestation-sign-ready CAB)
+REM
+REM Signing gate (optional but enforced-when-enabled):
+REM   set VAC_SIGN_P12=C:\path\code-signing.p12
+REM   set VAC_SIGN_PASS=yourpassword
+REM   call kmod-win\build.cmd
+REM
+REM   Self-signed test cert (pipeline testing only):
+REM     bash signing\gen-test-cert.sh            (Linux; produces signing\test-cert.p12)
+REM     set VAC_SIGN_P12=signing\test-cert.p12
+REM     set VAC_SIGN_PASS=vac-test
+REM
+REM   Production driver trust is Microsoft attestation signing (Partner Center),
+REM   which requires a real EV cert -- see the "Production signing" section below.
+REM   TODO: switch production signing to Microsoft Trusted Signing.
 
 setlocal enabledelayedexpansion
 
@@ -20,13 +34,18 @@ echo [vac] Linking ...
 link /nologo /driver /subsystem:native /entry:DriverEntry /out:"%BIN_DIR%\vac.sys" "%BIN_DIR%\vac.obj" ntoskrnl.lib
 if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
-echo [vac] Signed: %BIN_DIR%\vac.sys
+echo.
+echo [vac] Applying signing gate (local Authenticode test signature only)...
+call "%~dp0..\signing\sign.cmd" "%BIN_DIR%\vac.sys"
+if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 echo.
 echo [vac] To sign for production (attestation signing):
 echo  1. Create a CAB containing vac.sys + INF
 echo  2. EV-sign the CAB: signtool sign /fd sha256 /a /tr http://timestamp.digicert.com
 echo  3. Submit via Partner Center Hardware Dashboard
 echo  4. Download Microsoft-signed result
+echo  5. NOTE: attestation requires a real EV cert. TODO: Microsoft Trusted Signing
+echo     is a cheaper alternative for user-mode trust; kernel drivers still need EV.
 echo.
 echo [vac] To install on test machine (test-signing mode only):
 echo  bcdedit /set testsigning on
