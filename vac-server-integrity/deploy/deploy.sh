@@ -1,12 +1,18 @@
 #!/bin/bash
 set -ex
 
-# VAC Integrity Deployment Script
+# VAC Integrity Deployment Script (cloud/server)
 # Usage (as root):    curl -sL https://raw.githubusercontent.com/text70/VAC/refs/heads/main/vac-server-integrity/deploy/deploy.sh | bash
 # Usage (with sudo):  curl -sL https://raw.githubusercontent.com/text70/VAC/refs/heads/main/vac-server-integrity/deploy/deploy.sh | sudo bash
+#
+# The container builds all VAC Rust binaries from source inside the image, so
+# no host Rust toolchain is required for the server itself.  Only gen-keys is
+# built on the host (needed to create the PQC key pair under /etc/vac/keys).
 
 REPO_URL="https://github.com/text70/VAC.git"
 INSTALL_DIR="/opt/vac-integrity"
+
+export DEBIAN_FRONTEND=noninteractive
 
 # Handle sudo gracefully — skip if already root
 if [ "$(id -u)" -eq 0 ]; then
@@ -20,9 +26,9 @@ echo "=== VAC Integrity Deployment ==="
 # 1. Install dependencies
 $SUDO apt-get update
 $SUDO apt-get install -y git podman python3-pip linux-headers-$(uname -r) build-essential curl
-pip3 install podman-compose
+pip3 install --break-system-packages podman-compose 2>/dev/null || pip3 install podman-compose
 
-# Install/Update Rust
+# Install/Update Rust (only needed for gen-keys)
 if command -v cargo &> /dev/null; then
     echo "--- Updating Rust ---"
     rustup update
@@ -48,33 +54,36 @@ if [ -z "$PROJECT_ROOT" ]; then PROJECT_ROOT="."; fi
 ROOT_DIR="$(pwd)/$PROJECT_ROOT"
 echo "--- Detected project root: $ROOT_DIR ---"
 
-# 4. Compile and load kernel module
-echo "--- Ensuring kernel headers are installed for $(uname -r) ---"
-$SUDO apt-get install -y linux-headers-$(uname -r)
-
-echo "--- Compiling kernel module ---"
-cd "$ROOT_DIR/kmod"
-make clean
-make
-cd "$ROOT_DIR"
-
-if lsmod | grep -q vac; then
-    $SUDO rmmod vac
+# 4. Kernel module (OPTIONAL — cloud hosts may not permit module loading).
+#    The daemon falls back to user-mode /proc scans when /dev/vac is absent.
+KMOD_OK=0
+if [ -d /lib/modules/$(uname -r) ]; then
+    echo "--- Compiling kernel module ---"
+    cd "$ROOT_DIR/kmod"
+    make clean || true
+    make || true
+    cd "$ROOT_DIR"
+    if [ -f kmod/vac.ko ]; then
+        echo "--- Loading kernel module ---"
+        if lsmod | grep -q vac; then
+            $SUDO rmmod vac || true
+        fi
+        if $SUDO insmod kmod/vac.ko && [ -e /dev/vac ]; then
+            $SUDO chmod 666 /dev/vac
+            KMOD_OK=1
+            echo "--- Kernel module loaded: /dev/vac available ---"
+        else
+            echo "--- WARNING: could not load vac.ko (/dev/vac missing)."
+            echo "    Continuing WITHOUT ring-0 scans; daemon will use user-mode /proc. ---"
+        fi
+    else
+        echo "--- WARNING: kmod build failed; continuing without ring-0 scans. ---"
+    fi
+else
+    echo "--- WARNING: kernel headers for $(uname -r) unavailable; skipping kmod. ---"
 fi
-$SUDO insmod kmod/vac.ko
-$SUDO chmod 666 /dev/vac
 
-# 5. Build VAC binaries and stage them for container build
-echo "--- Building VAC binaries ---"
-cd "$ROOT_DIR"
-cargo build --release -p vac-integrity -p vac-daemon
-
-echo "--- Staging binaries for container build ---"
-mkdir -p "$ROOT_DIR/docker/build-staging"
-cp target/release/libvac_integrity.so "$ROOT_DIR/docker/build-staging/"
-cp target/release/vac-daemon "$ROOT_DIR/docker/build-staging/"
-
-# 6. Build generator and setup keys
+# 5. Build key generator (host-side) and generate PQC keys
 echo "--- Building key generator ---"
 cd "$ROOT_DIR"
 cargo build --release -p gen-keys
@@ -91,21 +100,28 @@ echo "--- Verifying keys created ---"
 ls -la /etc/vac/keys/
 $SUDO chmod 600 /etc/vac/keys/*.der
 
-# 7. Setup mount directory with keys + VAC binaries
-echo "--- Setting up mount directory /etc/vac/keys ---"
-$SUDO mkdir -p /etc/vac/keys
-cp target/release/libvac_integrity.so target/release/vac-daemon /etc/vac/keys/
-$SUDO chmod 644 /etc/vac/keys/libvac_integrity.so
-$SUDO chmod 755 /etc/vac/keys/vac-daemon
+# 6. Default worldsize by RAM (4500 needs ~4GB+; small VMs use 1000)
+TOTAL_MB=$(free -m | awk '/^Mem:/{print $2}')
+if [ -n "$TOTAL_MB" ] && [ "$TOTAL_MB" -lt 4000 ] && [ -z "$VAC_WORLDSIZE" ]; then
+    echo "--- Low-RAM VM detected (${TOTAL_MB}MB): defaulting VAC_WORLDSIZE=1000 ---"
+    export VAC_WORLDSIZE=1000
+fi
+if [ -z "$VAC_WORLDSIZE" ]; then
+    export VAC_WORLDSIZE=4500
+fi
 
-# 8. Deploy with podman-compose
+# 7. Deploy with podman-compose (add kmod override only if the module loaded)
 echo "--- Deploying containers ---"
 cd "$ROOT_DIR/docker"
-podman-compose up -d --build
-
-rm -rf "$ROOT_DIR/docker/build-staging"
+if [ "$KMOD_OK" -eq 1 ]; then
+    echo "--- Including kmod device override (docker-compose.kmod.yml) ---"
+    podman-compose -f docker-compose.yml -f docker-compose.kmod.yml up -d --build
+else
+    podman-compose up -d --build
+fi
 
 echo "=== Deployment Complete ==="
 echo "VAC Integrity is running."
 echo ""
 echo "Check: podman logs docker_rust-server_1"
+echo "Tune server via env vars (VAC_WORLDSIZE, VAC_MAXPLAYERS, VAC_HOSTNAME, VAC_RCON_PASSWORD, ...)."

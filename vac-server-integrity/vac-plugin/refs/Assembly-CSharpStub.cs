@@ -26,8 +26,7 @@ public class BasePlayer
     public bool IsConnected = false;
 
     public void Kick(string reason) { }
-    public void SendChatMessage(string message) { }
-    public void SendChatMessage(string name, string message) { }
+    public void ChatMessage(string message) { }
 
     public static BasePlayer FindByID(ulong userId)
     {

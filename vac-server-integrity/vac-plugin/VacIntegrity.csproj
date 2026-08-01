@@ -27,4 +27,8 @@
       <Private>false</Private>
     </Reference>
   </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="refs/Assembly-CSharpStub.cs" />
+  </ItemGroup>
 </Project>

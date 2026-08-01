@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   rust-server:
     build:
@@ -9,11 +7,19 @@ services:
       - "28015:28015/udp"   # Game
       - "28082:28082/tcp"   # RCON/App
       - "28084:28084/tcp"   # VAC daemon listener (client scan results)
+      - "28085:28085/tcp"   # VAC installer download server (vac-setup.exe)
+    environment:
+      - VAC_WORLDSIZE=${VAC_WORLDSIZE:-4500}
+      - VAC_MAXPLAYERS=${VAC_MAXPLAYERS:-5}
+      - VAC_SEED=${VAC_SEED:-12345}
+      - VAC_HOSTNAME=${VAC_HOSTNAME:-VacIntegrity Test Server}
+      - VAC_IDENTITY=${VAC_IDENTITY:-server}
+      - VAC_SERVER_PORT=${VAC_SERVER_PORT:-28015}
+      - VAC_APP_PORT=${VAC_APP_PORT:-28082}
+      - VAC_RCON_PASSWORD=${VAC_RCON_PASSWORD:-}
     volumes:
       - rust-server-data:/server/server
       - /etc/vac/keys:/server/vac-extra:ro
-    devices:
-      - /dev/vac:/dev/vac
     restart: unless-stopped
     stdin_open: true
     tty: true

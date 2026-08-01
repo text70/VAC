@@ -38,21 +38,41 @@ fi
 
 echo "  Plugin: OK"
 
+# -----------------------------------------------------------------------------
+# Server configuration — all overridable via env vars for cloud deployment.
+# worldsize 4500 requires ~4GB+ RAM for map generation; use 1000 on small VMs.
+# -----------------------------------------------------------------------------
+WORLDSIZE="${VAC_WORLDSIZE:-4500}"
+MAXPLAYERS="${VAC_MAXPLAYERS:-5}"
+SEED="${VAC_SEED:-12345}"
+HOSTNAME="${VAC_HOSTNAME:-VacIntegrity Test Server}"
+DESCRIPTION="${VAC_DESCRIPTION:-VAC Integrity Testing Environment}"
+IDENTITY="${VAC_IDENTITY:-server}"
+SERVER_PORT="${VAC_SERVER_PORT:-28015}"
+APP_PORT="${VAC_APP_PORT:-28082}"
+SAVEINTERVAL="${VAC_SAVEINTERVAL:-300}"
+TICKRATE="${VAC_TICKRATE:-30}"
+RCON_PASSWORD="${VAC_RCON_PASSWORD:-}"
+
+echo ""
+echo "  worldsize=${WORLDSIZE} maxplayers=${MAXPLAYERS} seed=${SEED} tickrate=${TICKRATE}"
+echo "  identity=${IDENTITY} port=${SERVER_PORT} app.port=${APP_PORT}"
+
 cd "${SERVER_DIR}"
 
 # Generate a minimal server config if not present
 # RustDedicated reads config from server/<identity>/cfg/server.cfg
-IDENTITY_DIR="${SERVER_DIR}/server/server"
+IDENTITY_DIR="${SERVER_DIR}/server/${IDENTITY}"
 if [ ! -f "${IDENTITY_DIR}/cfg/server.cfg" ]; then
     mkdir -p "${IDENTITY_DIR}/cfg"
-    cat > "${IDENTITY_DIR}/cfg/server.cfg" << 'CFG'
-server.hostname "VacIntegrity Test Server"
-server.description "VAC Integrity Testing Environment"
-server.maxplayers 5
-server.worldsize 4500
-server.seed 12345
-server.saveinterval 300
-server.tickrate 30
+    cat > "${IDENTITY_DIR}/cfg/server.cfg" << CFG
+server.hostname "${HOSTNAME}"
+server.description "${DESCRIPTION}"
+server.maxplayers ${MAXPLAYERS}
+server.worldsize ${WORLDSIZE}
+server.seed ${SEED}
+server.saveinterval ${SAVEINTERVAL}
+server.tickrate ${TICKRATE}
 CFG
     echo "  Generated server.cfg"
 fi
@@ -66,15 +86,22 @@ export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${NATIVE_DIR}"
 echo ""
 echo "=== Starting RustDedicated with Carbon ==="
 
-exec ./RustDedicated \
+SERVER_ARGS=( \
     -batchmode \
-    +server.port 28015 \
+    +server.port "${SERVER_PORT}" \
     +server.level "Procedural Map" \
-    +server.seed 12345 \
-    +server.worldsize 4500 \
-    +server.maxplayers 5 \
-    +server.hostname "VacIntegrity Test Server" \
-    +server.identity "server" \
-    +server.saveinterval 300 \
-    +app.port 28082 \
-    -logfile stdout
+    +server.seed "${SEED}" \
+    +server.worldsize "${WORLDSIZE}" \
+    +server.maxplayers "${MAXPLAYERS}" \
+    +server.hostname "${HOSTNAME}" \
+    +server.identity "${IDENTITY}" \
+    +server.saveinterval "${SAVEINTERVAL}" \
+    +app.port "${APP_PORT}" \
+    -logfile stdout \
+)
+
+if [ -n "${RCON_PASSWORD}" ]; then
+    SERVER_ARGS+=( +rcon.password "${RCON_PASSWORD}" )
+fi
+
+exec ./RustDedicated "${SERVER_ARGS[@]}"

@@ -76,6 +76,15 @@ fn user_mode_proc_list() -> Vec<(u32, String)> {
         if comm_start >= comm_end {
             continue;
         }
+        // Kernel threads: kthreadd is always pid 2 and every kernel thread is
+        // forked by it (ppid == 2).  Skip them so user-mode and ring-0 lists
+        // agree — the kmod filters the same tasks via PF_KTHREAD.
+        let after_comm = content[comm_end + 1..].trim();
+        let parts: Vec<&str> = after_comm.split_whitespace().collect();
+        let ppid: u32 = if parts.len() >= 2 { parts[1].parse().unwrap_or(0) } else { 0 };
+        if pid == 2 || ppid == 2 {
+            continue;
+        }
         let comm = content[comm_start..comm_end].to_string();
         procs.push((pid, comm));
     }

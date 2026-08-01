@@ -1,0 +1,40 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'vac-server-integrity/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'vac-server-integrity/**'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vac-server-integrity
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: vac-server-integrity
+
+      - name: Build (release, all crates)
+        run: cargo build --release --workspace
+
+      - name: Run unit tests
+        run: cargo test --workspace
+
+      - name: Run test-harness (end-to-end)
+        run: cargo run -p test-harness

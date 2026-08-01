@@ -1,5 +1,35 @@
 # syntax=docker/dockerfile:1
 #------------------------------------------------------------------------------
+# Builder stage: compile VAC Rust binaries on glibc 2.31 (Debian bullseye) so
+# they run on the runtime image's glibc 2.35 (ubuntu-22).  Host-built binaries
+# are NOT used — they carry newer glibc symbols and crash the container.
+#------------------------------------------------------------------------------
+FROM docker.io/rust:1-bullseye AS builder
+
+WORKDIR /build
+
+COPY Cargo.toml Cargo.lock ./
+COPY vac-core/ vac-core/
+COPY vac-sys/ vac-sys/
+COPY vac-crypto/ vac-crypto/
+COPY vac-module-systeminfo/ vac-module-systeminfo/
+COPY vac-module-processhandle/ vac-module-processhandle/
+COPY vac-module-processmonitor/ vac-module-processmonitor/
+COPY vac-module-deviceinfo/ vac-module-deviceinfo/
+COPY vac-module-driverinfo/ vac-module-driverinfo/
+COPY vac-module-readmodules/ vac-module-readmodules/
+COPY vac-host/ vac-host/
+COPY vac-client-core/ vac-client-core/
+COPY vac-client-linux/ vac-client-linux/
+COPY vac-client-win/ vac-client-win/
+COPY vac-daemon/ vac-daemon/
+COPY vac-daemon-win/ vac-daemon-win/
+COPY tools/ tools/
+COPY test-harness/ test-harness/
+
+RUN cargo build --release -p vac-integrity -p vac-daemon -p gen-keys
+
+#------------------------------------------------------------------------------
 # Server stage: Install RustDedicated + Carbon (pre-built VAC binaries)
 #------------------------------------------------------------------------------
 FROM docker.io/steamcmd/steamcmd:ubuntu-22 AS server
@@ -52,11 +82,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy RustDedicated + Carbon from server stage
 COPY --from=server ${SERVER_DIR} ${SERVER_DIR}
 
-# Copy pre-built VAC binaries from host context (staged in docker/build-staging/)
-COPY docker/build-staging/libvac_integrity.so ${NATIVE_DIR}/
-COPY docker/build-staging/vac-daemon ${NATIVE_DIR}/
+# Copy VAC binaries built in the builder stage (glibc-2.31 compatible)
+COPY --from=builder /build/target/release/libvac_integrity.so ${NATIVE_DIR}/
+COPY --from=builder /build/target/release/vac-daemon ${NATIVE_DIR}/
+COPY --from=builder /build/target/release/gen-keys /usr/local/bin/gen-keys
 
-# Copy VacIntegrity C# plugin source
+# Copy VacIntegrity C# plugin source (compiled at runtime by Carbon)
 COPY vac-plugin/VacIntegrity.cs ${PLUGINS_DIR}/
 
 # Copy entrypoint
@@ -68,5 +99,6 @@ WORKDIR ${SERVER_DIR}
 EXPOSE 28015/udp
 EXPOSE 28082/tcp
 EXPOSE 28084/tcp
+EXPOSE 28085/tcp
 
 ENTRYPOINT ["/entrypoint.sh"]

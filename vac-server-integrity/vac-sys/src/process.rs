@@ -33,6 +33,13 @@ pub fn enumerate_processes() -> io::Result<Vec<(u32, u32, String)>> {
         };
         let ppid = parse_ppid(&stat_content).unwrap_or(0);
         let comm = parse_comm(&stat_content).unwrap_or_default();
+        // Skip kernel threads: kthreadd is always pid 2, and every kernel
+        // thread is forked by kthreadd (ppid == 2).  Mirrors the kmod's
+        // PF_KTHREAD filter so ring-0 and user-mode process lists agree,
+        // keeping the hidden/missing process check consistent.
+        if pid == 2 || ppid == 2 {
+            continue;
+        }
         processes.push((pid, ppid, comm));
     }
     processes.sort_by_key(|p| p.0);

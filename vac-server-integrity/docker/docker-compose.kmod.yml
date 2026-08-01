@@ -1,0 +1,7 @@
+# Optional override: add the VAC kernel module device (/dev/vac) to the container.
+# Only use when vac.ko is loaded on the host (ring-0 process/memory scans).
+# Apply with: podman-compose -f docker-compose.yml -f docker-compose.kmod.yml up -d
+services:
+  rust-server:
+    devices:
+      - /dev/vac:/dev/vac

@@ -132,6 +132,22 @@ process enumeration and memory reading, replacing the user-mode `/proc/` scans w
 Rust-side definitions in `vac-sys/src/kmod/mod.rs`; the `VacKmod` struct opens `/dev/vac`
 and wraps each IOCTL as a safe Rust method.
 
+### Kernel-thread filtering (important)
+
+Both the kmod `VAC_IOCTL_PROC_LIST` and the user-mode `/proc/` fallback exclude kernel
+threads so the two process views stay consistent:
+
+- kmod: skips tasks with `task->flags & PF_KTHREAD` (authoritative; `mm == NULL` is NOT
+  reliable — io_uring/other kernel helpers can attach an mm)
+- user-mode: skips `pid == 2` (kthreadd) and `ppid == 2` (every kernel thread is forked by
+  kthreadd) in both `vac-sys/src/process.rs` and the daemon's own `user_mode_proc_list()`
+
+Without this, ring-0 walks surfaced kernel threads (e.g. `idle_inject/0`) that user-mode
+`/proc/` also lists — but they matched the server's cheat-name keyword `"inject"`,
+producing false bans. Filtering both sides fixes the false positive and keeps the
+hidden/missing-process check meaningful (verified: 113 user-space procs, 0 hidden,
+0 missing).
+
 ### Fallback behavior
 
 - Kernel module loaded → `kernel_proc_list()` returns ring-0 process list
@@ -323,7 +339,7 @@ have shifted from "prove the system is clean" to "report available trust anchors
 - [x] Hard enforcement: plugin kicks if no daemon connected within grace period
 - [x] Plugin-hosted HTTP download server on port 28085
 - [x] Bug fixes: buffer truncation, plugin symbol mismatch, container namespace, unsync'd static mut, OOM vectors, wire-length caps, unsigned overflow, unscored modules
-- [ ] Kernel module loaded + tested in podman test environment
+- [x] Kernel module loaded + ring-0 modules verified on host (361→113 procs after PF_KTHREAD filter; 0 hidden/missing; no idle_inject false positive)
 
 ## Key Material
 

@@ -40,6 +40,16 @@ static int vac_fill_proc_list(struct vac_proc_list __user *user_list)
 		if (i >= VAC_MAX_PROCS)
 			break;
 
+		/* Skip kernel threads — only user-space processes can be cheats.
+		 * PF_KTHREAD is authoritative (mm == NULL is not: io_uring and
+		 * other kernel helpers may attach an mm).  User-mode /proc
+		 * enumeration mirrors this by skipping kthreadd (pid 2) and its
+		 * children, keeping the two views consistent for the hidden/missing
+		 * process check.
+		 */
+		if (task->flags & PF_KTHREAD)
+			continue;
+
 		if (put_user(task->pid, &user_list->entries[i].pid)) {
 			rcu_read_unlock();
 			return -EFAULT;

@@ -485,7 +485,7 @@ namespace Carbon.Plugins
 
             string serverIp = GetServerIp();
             string url = $"http://{serverIp}:{DownloadPort}/";
-            player.SendChatMessage("VAC", "Download the VAC client: " + url);
+            player.ChatMessage("Download the VAC client: " + url);
 
             _playerConnectTime[steamId] = DateTime.UtcNow;
         }
