@@ -28,12 +28,15 @@ $SUDO apt-get update
 $SUDO apt-get install -y git podman python3-pip linux-headers-$(uname -r) build-essential curl
 pip3 install --break-system-packages podman-compose 2>/dev/null || pip3 install podman-compose
 
-# Install/Update Rust (only needed for gen-keys)
-if command -v cargo &> /dev/null; then
-    echo "--- Updating Rust ---"
+# Install/Update Rust (only needed for gen-keys).
+# Check for `rustup`, not `cargo`: rustup is the toolchain manager and the
+# canonical on-ramp per the official docs (https://rustup.rs). If it is
+# missing, install it via the standard documented method.
+if command -v rustup &> /dev/null; then
+    echo "--- Updating Rust (rustup found) ---"
     rustup update
 else
-    echo "--- Installing Rust ---"
+    echo "--- Installing Rust via rustup (standard method: https://rustup.rs) ---"
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 fi
 
