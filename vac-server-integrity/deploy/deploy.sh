@@ -29,14 +29,24 @@ $SUDO apt-get install -y git podman python3-pip linux-headers-$(uname -r) build-
 pip3 install --break-system-packages podman-compose 2>/dev/null || pip3 install podman-compose
 
 # Install/Update Rust (only needed for gen-keys).
-# Check for `rustup`, not `cargo`: rustup is the toolchain manager and the
-# canonical on-ramp per the official docs (https://rustup.rs). If it is
-# missing, install it via the standard documented method.
-if command -v rustup &> /dev/null; then
-    echo "--- Updating Rust (rustup found) ---"
-    rustup update
+# rustup is the canonical toolchain manager (https://rustup.rs).
+#
+# NOTE: a `rustup`/`cargo` binary on PATH is NOT proof of a working install.
+# A partial install (e.g. deleted/empty RUSTUP_HOME) leaves broken shims in
+# "$HOME/.cargo/bin" that fail with:
+#   info: no updatable toolchains installed
+#   error: rustup is not installed at '/root/.cargo'
+# So we only run the "update" branch when `rustup` actually executes
+# successfully. Otherwise we install/repair via the official installer, which
+# is idempotent and restores exactly that broken state.
+if command -v rustup &> /dev/null && rustup --version &> /dev/null; then
+    echo "--- Updating Rust (rustup OK: $(rustup --version)) ---"
+    rustup update || {
+        echo "--- rustup update failed; repairing via official installer ---"
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    }
 else
-    echo "--- Installing Rust via rustup (standard method: https://rustup.rs) ---"
+    echo "--- Installing/repairing Rust via rustup (standard method: https://rustup.rs) ---"
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 fi
 
