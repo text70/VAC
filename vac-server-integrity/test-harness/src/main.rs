@@ -27,12 +27,16 @@ fn main() {
 
     // 3. Seal round-trip
     test_seal();
+    test_seal_unsigned();
 
     // 4. Full end-to-end via host
     test_via_host();
 
     // 5. Client-side scan modules
     test_client_scan();
+
+    // 6. Enrollment token lifecycle
+    test_token_flow();
 
     println!("\n=== All tests passed ===");
 }
@@ -100,7 +104,7 @@ fn test_seal() {
 
     let seal_key = vac_crypto::seal::SealKey {
         kyber_public_key: pk.as_bytes().to_vec(),
-        mldsa65_secret_key: dsa_sk.as_bytes().to_vec(),
+        mldsa65_secret_key: Some(dsa_sk.as_bytes().to_vec()),
     };
     let open_key = vac_crypto::seal::OpenKey {
         kyber_secret_key: sk.as_bytes().to_vec(),
@@ -119,6 +123,44 @@ fn test_seal() {
 
     println!("[PASS] PQC seal round-trip ({} sealed -> {} opened)",
         sealed.raw.len(), opened.len());
+}
+
+fn test_seal_unsigned() {
+    // Client-mode seal: no signing key available. Payload must still encrypt,
+    // decrypt, and carry the unsigned flag in the wire module id.
+    let (pk, sk) = pqcrypto_kyber::kyber768::keypair();
+    let (dsa_pk, _dsa_sk) = pqcrypto_dilithium::dilithium3::keypair();
+
+    let seal_key = vac_crypto::seal::SealKey {
+        kyber_public_key: pk.as_bytes().to_vec(),
+        mldsa65_secret_key: None,
+    };
+    let open_key = vac_crypto::seal::OpenKey {
+        kyber_secret_key: sk.as_bytes().to_vec(),
+        mldsa65_public_key: dsa_pk.as_bytes().to_vec(),
+    };
+
+    let plaintext = vec![0xABu8; 1024];
+    let sealed = vac_crypto::seal::seal(&plaintext, 203, &seal_key)
+        .expect("unsigned seal failed");
+
+    // Unsigned payload must be shorter than a signed one (no 3293-byte sig)
+    assert_eq!(sealed.raw.len(), 16 + 1088 + 12 + 16 + plaintext.len(),
+        "unsigned payload has header+ct+nonce+tag+data only");
+
+    let (opened, module_id, _ts) = vac_crypto::seal::open(&sealed.raw, &open_key)
+        .expect("unsigned open failed");
+    assert_eq!(module_id, 203, "unsigned flag stripped from returned mid");
+    assert_eq!(opened, plaintext, "unsigned round-trip must restore plaintext");
+
+    // Tampering with ciphertext must break AES-GCM integrity
+    let mut tampered = sealed.raw.clone();
+    let last = tampered.len() - 1;
+    tampered[last] ^= 0xFF;
+    assert!(vac_crypto::seal::open(&tampered, &open_key).is_err(),
+        "tampered unsigned payload must fail to open");
+
+    println!("[PASS] PQC unsigned client seal ({} bytes, tamper-detected)", sealed.raw.len());
 }
 
 fn test_module<T: Module>(module_id: u32, name: &str, mut module: T) {
@@ -187,7 +229,7 @@ fn test_client_scan() {
 
     let sys = vac_sys::linux::LinuxSystem::new();
     let (pk, sk) = pqcrypto_kyber::kyber768::keypair();
-    let (dsa_pk, dsa_sk) = pqcrypto_dilithium::dilithium3::keypair();
+    let (dsa_pk, _dsa_sk) = pqcrypto_dilithium::dilithium3::keypair();
 
     for module_id in 1..=6 {
         let mut buf = DataBuffer::new();
@@ -205,7 +247,7 @@ fn test_client_scan() {
         };
         let seal_key = seal::SealKey {
             kyber_public_key: pk.as_bytes().to_vec(),
-            mldsa65_secret_key: dsa_sk.as_bytes().to_vec(),
+            mldsa65_secret_key: None,
         };
         let open_key = seal::OpenKey {
             kyber_secret_key: sk.as_bytes().to_vec(),
@@ -233,4 +275,46 @@ fn test_client_scan() {
         println!("[PASS] Client scan module {} ({} dwords written, {} sealed bytes, {} matches)",
             module_id, written, sealed.raw.len(), match_count);
     }
+}
+
+fn test_token_flow() {
+    use vac_integrity::{
+        vac_client_token_rs, vac_ensure_client_token_rs, vac_listener_start_rs,
+        vac_listener_stop_rs, vac_register_client_rs, vac_set_token_db_path_rs,
+    };
+
+    let dir = std::env::temp_dir().join(format!("vac-tok-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = dir.join("tokens.db");
+    vac_set_token_db_path_rs(db.to_str().unwrap());
+
+    assert!(vac_listener_start_rs(0), "listener should start on port 0");
+    let sid = 76561198000000001u64;
+
+    // Unregistered players have no tokens
+    assert!(vac_ensure_client_token_rs(sid).is_none(), "ensure on unregistered must fail");
+    assert!(vac_client_token_rs(sid).is_none(), "no token for unregistered");
+
+    // Register, then enroll: 32-hex token
+    vac_register_client_rs(sid, "tok_player");
+    let t1 = vac_ensure_client_token_rs(sid).expect("enrollment must produce a token");
+    assert_eq!(t1.len(), 32, "token is 32 hex chars");
+
+    // Stable across repeated calls and re-registration (player relog)
+    assert_eq!(vac_ensure_client_token_rs(sid).as_deref(), Some(t1.as_str()),
+        "repeated ensure must be stable");
+    vac_register_client_rs(sid, "tok_player_relog");
+    assert_eq!(vac_client_token_rs(sid).as_deref(), Some(t1.as_str()),
+        "relog re-registration must preserve the enrollment token");
+    vac_listener_stop_rs();
+
+    // Persistence: a fresh listener must reuse the stored token from disk
+    assert!(vac_listener_start_rs(0), "listener restart");
+    vac_register_client_rs(sid, "tok_player_after_restart");
+    let t2 = vac_ensure_client_token_rs(sid).expect("token after restart");
+    assert_eq!(t1, t2, "enrollment token must survive listener restart via db file");
+    vac_listener_stop_rs();
+
+    let _ = std::fs::remove_dir_all(&dir);
+    println!("[PASS] Enrollment token lifecycle (generate/stable/relog/restart)");
 }

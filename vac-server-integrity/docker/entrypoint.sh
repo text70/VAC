@@ -58,6 +58,53 @@ echo ""
 echo "  worldsize=${WORLDSIZE} maxplayers=${MAXPLAYERS} seed=${SEED} tickrate=${TICKRATE}"
 echo "  identity=${IDENTITY} port=${SERVER_PORT} app.port=${APP_PORT}"
 
+# -----------------------------------------------------------------------------
+# First-run self-check: catch the most common launch problems early.
+# -----------------------------------------------------------------------------
+FAILURES=0
+
+check_port_free() {
+    local port="$1" proto="$2"
+    if command -v ss >/dev/null 2>&1; then
+        if [ "$proto" = "udp" ]; then
+            ss -lun 2>/dev/null | grep -q ":${port} " && return 1
+        else
+            ss -ltn 2>/dev/null | grep -q ":${port} " && return 1
+        fi
+    fi
+    return 0
+}
+
+for p in "${SERVER_PORT}" "${APP_PORT}"; do
+    if ! check_port_free "$p" udp; then
+        echo "  WARNING: port ${p}/udp already in use on host network"
+        FAILURES=$((FAILURES+1))
+    fi
+done
+for p in 28084 28085; do
+    if ! check_port_free "$p" tcp; then
+        echo "  WARNING: port ${p}/tcp already in use (VAC listener/download)"
+        FAILURES=$((FAILURES+1))
+    fi
+done
+
+MEM_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+if [ "${WORLDSIZE}" -ge 4000 ] && [ "${MEM_KB}" -gt 0 ] && [ "${MEM_KB}" -lt 3500000 ]; then
+    echo "  WARNING: ~4GB+ RAM recommended for worldsize ${WORLDSIZE};"
+    echo "           this machine reports ${MEM_KB} kB. Consider VAC_WORLDSIZE=1000."
+fi
+
+JOIN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+if [ -n "${JOIN_IP}" ]; then
+    echo "  Players join via: ${JOIN_IP}:${SERVER_PORT}"
+    echo "  VAC status page:  http://${JOIN_IP}:28085/vac/status.html"
+fi
+if [ "${FAILURES}" -gt 0 ]; then
+    echo "  ${FAILURES} warning(s) detected - see above."
+else
+    echo "  Self-check: OK"
+fi
+
 cd "${SERVER_DIR}"
 
 # Generate a minimal server config if not present

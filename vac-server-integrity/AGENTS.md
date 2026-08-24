@@ -180,6 +180,12 @@ via `CreateFileW` + `DeviceIoControl`, same API as `VacKmod`.
 cd kmod-win
 build.cmd
 :: Output: kmod-win\x64\Release\vac.sys
+
+:: Package for Microsoft attestation signing (Partner Center):
+package.cmd
+:: -> kmod-win\dist\vac-driver-package.cab (vac.sys + vac.inf + vac.cat)
+:: Sign the CAB with your EV cert, upload to Partner Center, select
+:: "Attestation signing", then ship the MS-signed vac.sys/vac.cat.
 ```
 
 ### Authenticode signing gate (all Windows build artifacts)
@@ -355,13 +361,56 @@ The entrypoint copies keys from the mount into `/server/carbon/native/` alongsid
 | Offset | Size | Field |
 |--------|------|-------|
 | 0      | 4    | MAGIC (0x56414349) |
-| 4      | 4    | module_id (LE) |
+| 4      | 4    | module_id (LE) — bit 31 set = unsigned payload |
 | 8      | 8    | timestamp (nanos, LE) |
 | 16     | 1088 | Kyber-768 ciphertext |
 | 1104   | 12   | AES-256-GCM nonce |
 | 1116   | 16   | AES-256-GCM tag |
 | 1132   | N    | AES-256-GCM ciphertext (scan data) |
-| 1132+N | 3293 | ML-DSA-65 detached signature |
+| 1132+N | 3293 | ML-DSA-65 detached signature (only if signed) |
+
+**Client payloads are unsigned** (`mldsa65_secret_key: None`): clients never
+receive signing key material, so a leaked/shared client SK cannot forge
+server-trusted results. Integrity holds via AES-GCM under a fresh per-payload
+Kyber encapsulation; replay is caught by the server's per-scan nonce.
+Server-local scans (`vac_scan`) still sign with the server-held key.
+
+**Daemon protocol (port 28084)**:
+- AUTH `0x01`: `steam_id(8) [tok_len(u16) + token]`. Players are enrolled with
+  a stable per-player access token generated once by
+  `vac_server_ensure_client_token` and persisted across restarts
+  (`VAC_TOKEN_DB_PATH`, default `./vac-tokens.db`). The plugin delivers it to
+  the player privately via chat/magic-link; daemons present it on every AUTH
+  (`token=` in `vac-daemon.ini` or CLI arg 3 on Linux) — prevents steam_id
+  spoofing by third parties. Re-registration preserves existing tokens.
+- SCAN_CMD `0x03`: `module_id(4) + kyber_pk_len(4) + kyber_pk + nonce(8)`
+  (no secret keys on the wire).
+- RESULT `0x04`: `module_id(4) + sealed_len(4) + sealed`
+- PING/PONG `0x05`/`0x06`.
+
+Client scan module ids: 1–6 standard scans (sealed as 101–106),
+7 ring-0 procs (200), 8 hidden-proc diff (201), 9 memory scan (202),
+10 game-process memory scan (203). Module 203 layout:
+`[found][pid][status][rwx][priv_exec][hdr_mismatch]` — rwx/priv_exec are
+log-only telemetry (Discord/RTSS overlays map exec pages legitimately);
+only missing MZ headers on image-backed regions score points (manual-map
+evidence). On Windows, module 8 filters kernel artifacts (Idle/System/
+Memory Compression/Secure System/Registry) from both views before diffing.
+
+### Client UX surface
+
+- **Magic-link install**: chat link is `http://ip:28085/setup?t=<token>` —
+  serves a ZIP of `vac-setup.exe` + `vac-preload.ini` (server+token baked in).
+  The installer auto-fills all pages from the sibling ini; manual entry is
+  the fallback. `/vac-setup.exe` remains for manual downloads.
+- **Diagnostics**: `vac-daemon-win.exe --doctor [ini]` checks config, Steam
+  ID, access code, driver state, listener reachability; exit code = failures.
+- **Failure classification**: auth rejections back off 30s with actionable
+  text; network errors retry at 10s; normal reconnects 5s.
+- **Status for dashboards**: `GET /vac/status` (JSON:
+  `{players:[{steamid,name,daemon_connected,enrolled}]}`) and
+  `/vac/status.html` (auto-refreshing table, embeddable as a Carbon dashboard
+  custom tab). Read-only — tokens/key material are never exposed.
 
 - Every function in original C port has a comment with its byte signature (e.g. `// 83 C8 FF 83 E9 00`).
 - Module structs are exact layout recreations from reverse engineering — do not reorder fields or change padding.

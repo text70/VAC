@@ -8,6 +8,7 @@ use vac_crypto::seal::{HEADER_LEN, AES_NONCE_LEN, AES_TAG_LEN, KYBER_CT_LEN, MLD
 mod scan_scheduler;
 mod listener;
 mod policy;
+mod tokens;
 
 static SCAN_SCHEDULER: Mutex<Option<scan_scheduler::ScanScheduler>> = Mutex::new(None);
 
@@ -171,10 +172,10 @@ pub extern "C" fn vac_scan(module_id: u32, buffer: *mut u8, len: *mut i32) -> i3
         0, 0, 0, 0, 0, 0, 0, 0,
     ]);
 
-    // Seal with PQC
+    // Seal with PQC (server-held signing key — clients never receive SKs)
     let seal_key = seal::SealKey {
         kyber_public_key: kyber_pk,
-        mldsa65_secret_key: mldsa65_sk,
+        mldsa65_secret_key: Some(mldsa65_sk),
     };
 
     match seal::seal(&presence_payload, module_id, &seal_key) {
@@ -333,12 +334,17 @@ pub extern "C" fn vac_server_listener_stop() -> i32 {
 }
 
 /// Register a connected player for daemon authentication.
+/// token: optional per-player access token issued by the host (e.g. via in-game
+/// chat). When set, daemons must present it to authenticate — prevents
+/// steam_id spoofing by third parties.
 #[no_mangle]
 pub extern "C" fn vac_server_register_client(
     steam_id_lo: u32,
     steam_id_hi: u32,
     player_name: *const u8,
     player_name_len: i32,
+    token: *const u8,
+    token_len: i32,
 ) -> i32 {
     if player_name.is_null() || player_name_len <= 0 {
         return -1;
@@ -348,8 +354,98 @@ pub extern "C" fn vac_server_register_client(
         std::slice::from_raw_parts(player_name, player_name_len as usize)
     };
     let name_str = String::from_utf8_lossy(name).to_string();
-    listener::register_client(steam_id, &name_str);
+    let token_str = if !token.is_null() && token_len > 0 {
+        Some(String::from_utf8_lossy(unsafe {
+            std::slice::from_raw_parts(token, token_len as usize)
+        }).to_string())
+    } else {
+        None
+    };
+    listener::register_client(steam_id, &name_str, token_str);
     0
+}
+
+/// Return the player's current enrollment token, generating + persisting one
+/// on first call (per-player stable token, survives restarts via
+/// VAC_TOKEN_DB_PATH). Used by the host plugin for chat/magic-link delivery.
+/// Returns token length, or negative on error (-1 = not registered/buffer).
+#[no_mangle]
+pub extern "C" fn vac_server_ensure_client_token(
+    steam_id_lo: u32,
+    steam_id_hi: u32,
+    out_buf: *mut u8,
+    out_cap: i32,
+) -> i32 {
+    let steam_id = (steam_id_hi as u64) << 32 | steam_id_lo as u64;
+    let Some(tok) = listener::ensure_client_token(steam_id) else {
+        return -1;
+    };
+    copy_token_out(&tok, out_buf, out_cap)
+}
+
+/// Read-only fetch of the player's current enrollment token (no generation).
+/// Returns length, -1 if unregistered/no token.
+#[no_mangle]
+pub extern "C" fn vac_server_client_token(
+    steam_id_lo: u32,
+    steam_id_hi: u32,
+    out_buf: *mut u8,
+    out_cap: i32,
+) -> i32 {
+    let steam_id = (steam_id_hi as u64) << 32 | steam_id_lo as u64;
+    match listener::client_token(steam_id) {
+        Some(tok) => copy_token_out(&tok, out_buf, out_cap),
+        None => -1,
+    }
+}
+
+fn copy_token_out(tok: &str, out_buf: *mut u8, out_cap: i32) -> i32 {
+    // Null buffer = existence/length probe (used by status endpoints)
+    let len = tok.len() as i32;
+    if out_buf.is_null() {
+        return len;
+    }
+    if out_cap <= 0 || tok.len() + 1 > out_cap as usize {
+        return -1;
+    }
+    let bytes = tok.as_bytes();
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len());
+        *out_buf.add(bytes.len()) = 0; // NUL terminator
+    }
+    len
+}
+
+// --- Rust-friendly wrappers (harness / tests) ------------------------------
+
+/// Set the enrollment-token persistence path before starting the listener.
+pub fn vac_set_token_db_path_rs(path: &str) {
+    listener::tokens_set_db_path(path);
+}
+
+/// Start the daemon TCP listener without C FFI. Port 0 = OS-assigned.
+pub fn vac_listener_start_rs(port: u16) -> bool {
+    listener::start(port)
+}
+
+/// Stop the listener.
+pub fn vac_listener_stop_rs() {
+    listener::stop();
+}
+
+/// Register a player (name-only registration keeps any existing token).
+pub fn vac_register_client_rs(steam_id: u64, name: &str) {
+    listener::register_client(steam_id, name, None);
+}
+
+/// Ensure/fetch the player's enrollment token (generates on first call).
+pub fn vac_ensure_client_token_rs(steam_id: u64) -> Option<String> {
+    listener::ensure_client_token(steam_id)
+}
+
+/// Read-only token lookup.
+pub fn vac_client_token_rs(steam_id: u64) -> Option<String> {
+    listener::client_token(steam_id)
 }
 
 /// Unregister a disconnected player.

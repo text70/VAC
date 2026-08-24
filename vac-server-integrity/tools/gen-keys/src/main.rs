@@ -3,6 +3,22 @@ use pqcrypto_traits::sign::{PublicKey as SignPk, SecretKey as SignSk};
 use std::fs;
 use std::path::Path;
 
+/// Restrict a freshly written secret key to owner-only (unix).
+#[cfg(unix)]
+fn lock_down_secrets(paths: &[&Path]) {
+    use std::os::unix::fs::PermissionsExt;
+    for p in paths {
+        if let Ok(meta) = fs::metadata(p) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o600);
+            let _ = fs::set_permissions(p, perms);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn lock_down_secrets(_paths: &[&Path]) {}
+
 fn main() {
     let out_dir = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
     let out_path = Path::new(&out_dir);
@@ -28,6 +44,9 @@ fn main() {
     fs::write(&dsa_sk_path, dsa_sk.as_bytes()).expect("write dsa sk");
     println!("    Public key:  {} ({})", dsa_pk_path.display(), dsa_pk.as_bytes().len());
     println!("    Secret key:  {} ({})", dsa_sk_path.display(), dsa_sk.as_bytes().len());
+
+    lock_down_secrets(&[&kyber_sk_path, &dsa_sk_path]);
+    println!("  Secret keys restricted to owner-only (0600).");
 
     println!("Done. Deploy these to the server:");
     println!("  Server side (server/carbon/native/):");

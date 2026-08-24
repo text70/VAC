@@ -10,13 +10,21 @@ pub const AES_TAG_LEN: usize = 16;
 pub const MLDSA_65_SIG_LEN: usize = 3293;
 pub const HEADER_LEN: usize = 16;
 
+/// Module-id high bit marking an unsigned (client-sealed) payload.
+/// Clients never receive signing keys, so their payloads are encrypted-only;
+/// integrity is still enforced by the AES-GCM tag under the KEM shared secret,
+/// and replay is detected by the challenge nonce at the protocol layer.
+pub const UNSIGNED_FLAG: u32 = 0x8000_0000;
+
 pub struct SealedPayload {
     pub raw: Vec<u8>,
 }
 
 pub struct SealKey {
     pub kyber_public_key: Vec<u8>,
-    pub mldsa65_secret_key: Vec<u8>,
+    /// None → unsigned payload (module_id gets UNSIGNED_FLAG set).
+    /// Server-local scans sign with the server-held key.
+    pub mldsa65_secret_key: Option<Vec<u8>>,
 }
 
 pub struct OpenKey {
@@ -25,11 +33,14 @@ pub struct OpenKey {
 }
 
 pub fn seal(data: &[u8], module_id: u32, key: &SealKey) -> io::Result<SealedPayload> {
-    let total = HEADER_LEN + KYBER_CT_LEN + AES_NONCE_LEN + AES_TAG_LEN + data.len() + MLDSA_65_SIG_LEN;
+    let signed = key.mldsa65_secret_key.is_some();
+    let sig_len = if signed { MLDSA_65_SIG_LEN } else { 0 };
+    let total = HEADER_LEN + KYBER_CT_LEN + AES_NONCE_LEN + AES_TAG_LEN + data.len() + sig_len;
     let mut payload = Vec::with_capacity(total);
 
     payload.write_all(&MAGIC.to_le_bytes())?;
-    payload.write_all(&module_id.to_le_bytes())?;
+    let wire_mid = if signed { module_id } else { module_id | UNSIGNED_FLAG };
+    payload.write_all(&wire_mid.to_le_bytes())?;
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -62,17 +73,19 @@ pub fn seal(data: &[u8], module_id: u32, key: &SealKey) -> io::Result<SealedPayl
     payload.write_all(&tag)?;
     payload.write_all(&ct_data)?;
 
-    let dsa_sk = pqcrypto_dilithium::dilithium3::SecretKey::from_bytes(key.mldsa65_secret_key.as_ref())
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("bad dsa sk: {:?}", e)))?;
-    let sig = pqcrypto_dilithium::dilithium3::detached_sign(payload.as_slice(), &dsa_sk);
-    payload.write_all(sig.as_bytes())?;
+    if let Some(sk_bytes) = &key.mldsa65_secret_key {
+        let dsa_sk = pqcrypto_dilithium::dilithium3::SecretKey::from_bytes(sk_bytes.as_ref())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("bad dsa sk: {:?}", e)))?;
+        let sig = pqcrypto_dilithium::dilithium3::detached_sign(payload.as_slice(), &dsa_sk);
+        payload.write_all(sig.as_bytes())?;
+    }
 
     Ok(SealedPayload { raw: payload })
 }
 
 pub fn open(payload: &[u8], key: &OpenKey) -> io::Result<(Vec<u8>, u32, u64)> {
-    let min_len = HEADER_LEN + KYBER_CT_LEN + AES_NONCE_LEN + AES_TAG_LEN + MLDSA_65_SIG_LEN;
-    if payload.len() < min_len {
+    let base_min = HEADER_LEN + KYBER_CT_LEN + AES_NONCE_LEN + AES_TAG_LEN;
+    if payload.len() < base_min {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "payload too short"));
     }
 
@@ -84,23 +97,33 @@ pub fn open(payload: &[u8], key: &OpenKey) -> io::Result<(Vec<u8>, u32, u64)> {
     }
     off += 4;
 
-    let module_id = u32::from_le_bytes(payload[off..off + 4].try_into().unwrap());
+    let wire_module_id = u32::from_le_bytes(payload[off..off + 4].try_into().unwrap());
+    let unsigned = wire_module_id & UNSIGNED_FLAG != 0;
+    let module_id = wire_module_id & !UNSIGNED_FLAG;
     off += 4;
 
     let timestamp = u64::from_le_bytes(payload[off..off + 8].try_into().unwrap());
     off += 8;
 
-    let sig_start = payload.len() - MLDSA_65_SIG_LEN;
-    let signed_data = &payload[..sig_start];
-    let signature_bytes = &payload[sig_start..];
+    let sig_start = if unsigned {
+        payload.len()
+    } else {
+        if payload.len() < base_min + MLDSA_65_SIG_LEN {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "payload too short (signed)"));
+        }
+        let sig_start = payload.len() - MLDSA_65_SIG_LEN;
+        let signed_data = &payload[..sig_start];
+        let signature_bytes = &payload[sig_start..];
 
-    let dsa_pk = pqcrypto_dilithium::dilithium3::PublicKey::from_bytes(key.mldsa65_public_key.as_ref())
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("bad dsa pk: {:?}", e)))?;
-    let sig = pqcrypto_dilithium::dilithium3::DetachedSignature::from_bytes(signature_bytes)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("bad sig: {:?}", e)))?;
-    if pqcrypto_dilithium::dilithium3::verify_detached_signature(&sig, signed_data, &dsa_pk).is_err() {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "ML-DSA-65 signature invalid"));
-    }
+        let dsa_pk = pqcrypto_dilithium::dilithium3::PublicKey::from_bytes(key.mldsa65_public_key.as_ref())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("bad dsa pk: {:?}", e)))?;
+        let sig = pqcrypto_dilithium::dilithium3::DetachedSignature::from_bytes(signature_bytes)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("bad sig: {:?}", e)))?;
+        if pqcrypto_dilithium::dilithium3::verify_detached_signature(&sig, signed_data, &dsa_pk).is_err() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "ML-DSA-65 signature invalid"));
+        }
+        sig_start
+    };
 
     let kyber_ct = pqcrypto_kyber::kyber768::Ciphertext::from_bytes(&payload[off..off + KYBER_CT_LEN])
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("bad kyber ct: {:?}", e)))?;

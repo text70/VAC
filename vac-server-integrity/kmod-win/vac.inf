@@ -1,0 +1,50 @@
+;/*++
+; vac.inf -- VAC kernel driver package descriptor
+;
+; Used by inf2cat when building the CAB submitted to Partner Center for
+; Microsoft attestation signing. The driver is installed as a kernel service
+; (sc create Vac ...), not via PnP device enumeration.
+;--*/
+
+[Version]
+Signature="$WINDOWS NT$"
+Class=System
+ClassGuid={4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider=%ManufacturerName%
+CatalogFile=vac.cat
+DriverVer=08/24/2026,1.0.0.0
+PnpLockdown=1
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+vac.sys = 1,,,
+
+[DestinationDirs]
+DefaultDestDir = 12 ; %windir%\system32\drivers
+
+[DefaultInstall.NTamd64]
+CopyFiles = @vac.sys
+
+[DefaultInstall.NTamd64.Services]
+AddService = Vac,0x800,Vac_Service
+
+[DefaultUninstall.NTamd64]
+DelFiles = @vac.sys
+
+[DefaultUninstall.NTamd64.Services]
+DelService = Vac,0x200
+
+[Vac_Service]
+DisplayName    = %ServiceName%
+Description    = %ServiceDescription%
+ServiceBinary  = %12%\vac.sys
+ServiceType    = 1       ; SERVICE_KERNEL_DRIVER
+StartType      = 3       ; SERVICE_DEMAND_START
+
+[Strings]
+ManufacturerName    = "VAC Integrity"
+DiskName            = "VAC Driver Installation Disk"
+ServiceName         = "Vac"
+ServiceDescription  = "VAC ring-0 process/memory inspection driver"

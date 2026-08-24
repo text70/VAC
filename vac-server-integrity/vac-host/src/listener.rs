@@ -10,19 +10,29 @@ use vac_core::buffer::DataBuffer;
 use vac_crypto::seal;
 
 use crate::policy::{self, Action, FindingKind, ScoreState};
+use crate::tokens;
 
 static LISTENER_RUNNING: AtomicBool = AtomicBool::new(false);
 
-struct ListenerState {
+/// A player registered by the host (Carbon plugin / test harness).
+struct RegisteredPlayer {
+    name: String,
+    /// Per-player access token. When set, the daemon must present it in AUTH.
+    token: Option<String>,
+    state: ScoreState,
+}struct ListenerState {
     handle: Option<thread::JoinHandle<()>>,
     stop_flag: Arc<AtomicBool>,
-    registered: Arc<Mutex<HashMap<u64, (String, ScoreState)>>>,
+    registered: Arc<Mutex<HashMap<u64, RegisteredPlayer>>>,
     connected: Arc<Mutex<HashSet<u64>>>,
 }
 
 static LISTENER: RwLock<Option<ListenerState>> = RwLock::new(None);
 
 const NONCE_LEN: usize = 8;
+
+/// Seconds to idle between continuous scan rounds (connection stays open).
+const SCAN_ROUND_INTERVAL_SECS: u64 = 15;
 
 fn read_exact(stream: &mut TcpStream, buf: &mut [u8]) -> Result<(), String> {
     let mut off = 0;
@@ -114,6 +124,10 @@ fn decrypt_result(
                 202 => {
                     // Memory scan results
                     analyze_memory_module(&buf, cursor, player_name, state);
+                }
+                203 => {
+                    // Game-process memory scan results
+                    analyze_game_module(&buf, cursor, player_name, state);
                 }
                 _ => {
                     // Server-local modules (1-6)
@@ -276,6 +290,59 @@ fn analyze_memory_module(buf: &DataBuffer, cursor: usize, player_name: &str, sta
     }
 }
 
+/// Game-process scan (client module 10 → sealed mid 203).
+/// Payload dwords: [found][pid][status][rwx][priv_exec][hdr_mismatch]
+///
+/// Scoring is deliberately conservative: overlays (Discord/RTSS) legitimately
+/// map executable sections into the game process, so rwx/priv_exec are
+/// log-only telemetry. Only image-backed regions whose MZ header is missing
+/// score points — manual mappers strip headers; overlays never do.
+fn analyze_game_module(buf: &DataBuffer, cursor: usize, player_name: &str, state: &mut ScoreState) {
+    if cursor < 6 {
+        return;
+    }
+    let found = buf.raw[0];
+    let pid = buf.raw[1];
+    let status = buf.raw[2];
+    let rwx = buf.raw[3];
+    let priv_exec = buf.raw[4];
+    let hdr_mismatch = buf.raw[5];
+
+    if found == 0 {
+        eprintln!("[vac-listener] {} MODULE 203: game process not running", player_name);
+        return;
+    }
+    if status == 3 {
+        eprintln!("[vac-listener] {} MODULE 203: game pid={} inaccessible (permissions)", player_name, pid);
+        return;
+    }
+    eprintln!("[vac-listener] {} MODULE 203: game pid={} rwx={} priv_exec={}",
+        player_name, pid, rwx, priv_exec);
+    if hdr_mismatch > 0 {
+        let points = hdr_mismatch
+            .saturating_mul(policy::POINTS_DEBUGGER_FLAGS)
+            .min(60);
+        eprintln!("[vac-listener] {} MODULE 203: {} game module header mismatches (manual-map evidence)",
+            player_name, hdr_mismatch);
+        state.add_finding(
+            FindingKind::InjectedAssembly { name: format!("game-hdr-mismatch({}) pid={}", hdr_mismatch, pid) },
+            points,
+        );
+    }
+}
+
+/// Length-independent byte comparison to avoid trivially timing the token check.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 fn enforce_score_state(steam_id: u64, player_name: &str, state: &ScoreState) {
     let action = state.action();
     match action {
@@ -297,7 +364,7 @@ fn enforce_score_state(steam_id: u64, player_name: &str, state: &ScoreState) {
     }
 }
 
-fn handle_client(mut stream: TcpStream, registered: Arc<Mutex<HashMap<u64, (String, ScoreState)>>>, connected: Arc<Mutex<HashSet<u64>>>) {
+fn handle_client(mut stream: TcpStream, registered: Arc<Mutex<HashMap<u64, RegisteredPlayer>>>, connected: Arc<Mutex<HashSet<u64>>>) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
 
     let mut len_buf = [0u8; 4];
@@ -310,10 +377,37 @@ fn handle_client(mut stream: TcpStream, registered: Arc<Mutex<HashMap<u64, (Stri
 
     let steam_id = u64::from_le_bytes(msg[1..9].try_into().unwrap());
 
-    let (player_name, mut score_state) = {
+    // Optional access token: AUTH = type(1) + steam_id(8) [+ tok_len(u16) + token]
+    let presented_token: Option<String> = if msg.len() >= 11 {
+        let tlen = u16::from_le_bytes(msg[9..11].try_into().unwrap()) as usize;
+        if tlen > 0 && msg.len() >= 11 + tlen && tlen <= 128 {
+            Some(String::from_utf8_lossy(&msg[11..11 + tlen]).to_string())
+        } else if tlen > 0 {
+            return; // malformed token frame
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let (player_name, reg_token, mut score_state) = {
         let mut reg = registered.lock().unwrap();
         match reg.get_mut(&steam_id) {
-            Some((name, st)) => (name.clone(), st.clone()),
+            Some(rp) => {
+                // Token check: registered players with a token MUST present it.
+                // This prevents steam_id spoofing by third parties.
+                if let Some(expected) = &rp.token {
+                    match &presented_token {
+                        Some(t) if constant_time_eq(t.as_bytes(), expected.as_bytes()) => {}
+                        _ => {
+                            eprintln!("[vac-listener] Reject steam_id={}: bad/missing access token", steam_id);
+                            return;
+                        }
+                    }
+                }
+                (rp.name.clone(), rp.token.clone(), rp.state.clone())
+            }
             None => {
                 eprintln!("[vac-listener] Reject unregistered steam_id={}", steam_id);
                 return;
@@ -343,7 +437,7 @@ fn handle_client(mut stream: TcpStream, registered: Arc<Mutex<HashMap<u64, (Stri
 
     // Get sealing keys from the scheduler
     let keys = crate::get_keys();
-    let (kyber_pk, dsa_sk) = match keys {
+    let (kyber_pk, _dsa_sk) = match keys {
         Some(k) => k,
         None => {
             eprintln!("[vac-listener] No sealing keys");
@@ -351,17 +445,22 @@ fn handle_client(mut stream: TcpStream, registered: Arc<Mutex<HashMap<u64, (Stri
         }
     };
 
-    // Run all modules 1-9
-    for module_id in 1u32..=9 {
+    // Continuous scan rounds: keep the connection open between rounds so
+    // vac_server_daemon_connected() stays true — otherwise the plugin's
+    // enforcement timer would kick compliant players during reconnect gaps.
+    loop {
+    // Run all modules 1-10
+    for module_id in 1u32..=10 {
         // Generate random nonce for challenge-response
         let nonce: [u8; 8] = rand::random();
 
+        // NOTE: no secret key material is sent to the client — results are
+        // sealed encryption-only (AES-GCM under a fresh Kyber encapsulation)
+        // and replay-protected by the nonce.
         let mut cmd = Vec::new();
         cmd.extend_from_slice(&module_id.to_le_bytes());
         cmd.extend_from_slice(&(kyber_pk.len() as i32).to_le_bytes());
         cmd.extend_from_slice(&kyber_pk);
-        cmd.extend_from_slice(&(dsa_sk.len() as i32).to_le_bytes());
-        cmd.extend_from_slice(&dsa_sk);
         cmd.extend_from_slice(&nonce);
 
         if send_msg(&mut stream, 0x03, &cmd).is_err() {
@@ -403,13 +502,20 @@ fn handle_client(mut stream: TcpStream, registered: Arc<Mutex<HashMap<u64, (Stri
     // Store score state back
     {
         let mut reg = registered.lock().unwrap();
-        let name_clone = player_name.clone();
-        reg.insert(steam_id, (player_name, score_state));
-        eprintln!("[vac-listener] Client {} scan complete", name_clone);
+        reg.insert(steam_id, RegisteredPlayer {
+            name: player_name.clone(),
+            token: reg_token.clone(),
+            state: score_state.clone(),
+        });
+        eprintln!("[vac-listener] Client {} scan complete", player_name);
+    }
+
+    // Idle between rounds while holding the connection open
+    thread::sleep(Duration::from_secs(SCAN_ROUND_INTERVAL_SECS));
     }
 }
 
-fn listener_thread(port: u16, stop: Arc<AtomicBool>, registered: Arc<Mutex<HashMap<u64, (String, ScoreState)>>>, connected: Arc<Mutex<HashSet<u64>>>) {
+fn listener_thread(port: u16, stop: Arc<AtomicBool>, registered: Arc<Mutex<HashMap<u64, RegisteredPlayer>>>, connected: Arc<Mutex<HashSet<u64>>>) {
     let addr = format!("0.0.0.0:{}", port);
     let listener = match TcpListener::bind(&addr) {
         Ok(l) => {
@@ -448,7 +554,7 @@ pub fn start(port: u16) -> bool {
     }
 
     let stop = Arc::new(AtomicBool::new(false));
-    let registered: Arc<Mutex<HashMap<u64, (String, ScoreState)>>> = Arc::new(Mutex::new(HashMap::new()));
+    let registered: Arc<Mutex<HashMap<u64, RegisteredPlayer>>> = Arc::new(Mutex::new(HashMap::new()));
     let connected: Arc<Mutex<HashSet<u64>>> = Arc::new(Mutex::new(HashSet::new()));
 
     let stop_clone = stop.clone();
@@ -482,13 +588,85 @@ pub fn stop() {
     LISTENER_RUNNING.store(false, Ordering::SeqCst);
 }
 
-pub fn register_client(steam_id: u64, player_name: &str) {
+pub fn register_client(steam_id: u64, player_name: &str, token: Option<String>) {
     if let Ok(guard) = LISTENER.read() {
         if let Some(ref ls) = *guard {
             let mut reg = ls.registered.lock().unwrap();
-            reg.insert(steam_id, (player_name.to_string(), ScoreState::new()));
+            match reg.get_mut(&steam_id) {
+                // Re-registration (e.g. player relogged): refresh name/state,
+                // but PRESERVE an existing enrollment token so installed
+                // daemons keep authenticating across relogs.
+                Some(rp) => {
+                    rp.name = player_name.to_string();
+                    if token.is_some() {
+                        rp.token = token;
+                    }
+                    rp.state = ScoreState::new();
+                }
+                None => {
+                    reg.insert(steam_id, RegisteredPlayer {
+                        name: player_name.to_string(),
+                        token,
+                        state: ScoreState::new(),
+                    });
+                }
+            }
         }
     }
+}
+
+/// Return the player's enrollment token, generating + persisting one on first
+/// call. Returns None if the player is not currently registered.
+pub fn ensure_client_token(steam_id: u64) -> Option<String> {
+    {
+        let guard = LISTENER.read().ok()?;
+        let ls = guard.as_ref()?;
+        let reg = ls.registered.lock().unwrap();
+        match reg.get(&steam_id) {
+            Some(rp) => {
+                if let Some(t) = &rp.token {
+                    return Some(t.clone());
+                }
+            }
+            None => return None,
+        }
+    }
+
+    // Not yet enrolled: reuse a persisted token if we have one, else mint.
+    let mut disk = HashMap::new();
+    tokens::load_all(&mut disk);
+    let tok = match disk.get(&steam_id) {
+        Some(t) => t.clone(),
+        None => {
+            let t = tokens::generate();
+            tokens::store_one(steam_id, &t);
+            t
+        }
+    };
+
+    if let Ok(guard) = LISTENER.read() {
+        if let Some(ref ls) = *guard {
+            let mut reg = ls.registered.lock().unwrap();
+            if let Some(rp) = reg.get_mut(&steam_id) {
+                rp.token = Some(tok.clone());
+            }
+        }
+    }
+    Some(tok)
+}
+
+/// Read-only token lookup for the host (chat/magic-link delivery).
+/// Never exposed over the scan protocol or status endpoints.
+pub fn client_token(steam_id: u64) -> Option<String> {
+    let guard = LISTENER.read().ok()?;
+    let ls = guard.as_ref()?;
+    let reg = ls.registered.lock().unwrap();
+    reg.get(&steam_id)?.token.clone()
+}
+
+/// Set the token persistence path (delegates to the tokens module).
+pub fn tokens_set_db_path(path: &str) {
+    tokens::set_db_path(path);
 }
 
 pub fn unregister_client(steam_id: u64) {

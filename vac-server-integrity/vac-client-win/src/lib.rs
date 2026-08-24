@@ -5,41 +5,42 @@ use vac_core::buffer::DataBuffer;
 use vac_core::buffer::DATA_BUFFER_DWORDS;
 #[cfg(windows)]
 use vac_crypto::seal;
-use vac_crypto::seal::{HEADER_LEN, AES_NONCE_LEN, AES_TAG_LEN, KYBER_CT_LEN, MLDSA_65_SIG_LEN};
+use vac_crypto::seal::{HEADER_LEN, AES_NONCE_LEN, AES_TAG_LEN, KYBER_CT_LEN};
 
+/// Kept for ABI compatibility; no keys are stored client-side anymore.
 #[no_mangle]
-pub extern "C" fn vac_client_init(
-    _kyber_pk: *const u8,
-    _kyber_pk_len: i32,
-    _mldsa65_sk: *const u8,
-    _mldsa65_sk_len: i32,
-) -> i32 {
+pub extern "C" fn vac_client_init() -> i32 {
     0
 }
 
+/// Run a client-side scan module and return the sealed result.
+///
+/// Results are sealed encryption-only (Kyber-768 + AES-256-GCM): clients never
+/// receive signing key material. Integrity is enforced by the AES-GCM tag and
+/// the server's per-scan challenge nonce.
+///
+/// module_id: which scan module to run (1-6, or 10 = game memory scan)
 #[no_mangle]
 pub extern "C" fn vac_client_scan(
     module_id: u32,
     kyber_pk: *const u8,
     kyber_pk_len: i32,
-    mldsa65_sk: *const u8,
-    mldsa65_sk_len: i32,
     output: *mut u8,
     output_len: *mut i32,
 ) -> i32 {
     if output.is_null() || output_len.is_null() {
         return -1;
     }
-    if kyber_pk.is_null() || mldsa65_sk.is_null() {
+    if kyber_pk.is_null() {
         return -2;
     }
-    if module_id < 1 || module_id > 6 {
+    if (module_id < 1 || module_id > 6) && module_id != 10 {
         return -3;
     }
 
     let capacity = unsafe { *output_len as i32 as usize };
     let min_capacity = HEADER_LEN + KYBER_CT_LEN + AES_NONCE_LEN + AES_TAG_LEN
-        + (DATA_BUFFER_DWORDS * 4) + MLDSA_65_SIG_LEN;
+        + (DATA_BUFFER_DWORDS * 4);
     if capacity < min_capacity {
         return -4;
     }
@@ -47,14 +48,13 @@ pub extern "C" fn vac_client_scan(
     // Platform-specific implementation
     #[cfg(not(windows))]
     {
-        let _ = (kyber_pk, kyber_pk_len, mldsa65_sk, mldsa65_sk_len);
+        let _ = (kyber_pk, kyber_pk_len);
         return -6;
     }
 
     #[cfg(windows)]
     {
         let kpk = unsafe { std::slice::from_raw_parts(kyber_pk, kyber_pk_len as usize) }.to_vec();
-        let dsk = unsafe { std::slice::from_raw_parts(mldsa65_sk, mldsa65_sk_len as usize) }.to_vec();
 
         let sys = vac_sys::win32::Win32System::new();
         let mut buf = DataBuffer::new();
@@ -70,10 +70,12 @@ pub extern "C" fn vac_client_scan(
 
         let seal_key = seal::SealKey {
             kyber_public_key: kpk,
-            mldsa65_secret_key: dsk,
+            mldsa65_secret_key: None,
         };
 
-        match seal::seal(data_slice, module_id + 100, &seal_key) {
+        let seal_mid = if module_id == 10 { 203 } else { module_id + 100 };
+
+        match seal::seal(data_slice, seal_mid, &seal_key) {
             Ok(sealed) => {
                 let write_len = sealed.raw.len().min(capacity);
                 unsafe {

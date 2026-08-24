@@ -122,18 +122,29 @@ fn read_maps() -> Vec<MapEntry> {
     entries
 }
 
-fn handle_server(steam_id: u64, server_addr: &str) -> Result<(), String> {
+fn handle_server(steam_id: u64, token: Option<&str>, server_addr: &str) -> Result<(), String> {
     let mut stream = TcpStream::connect(server_addr)
         .map_err(|e| format!("connect: {}", e))?;
     stream.set_read_timeout(Some(Duration::from_secs(30)))
         .map_err(|e| format!("set timeout: {}", e))?;
 
-    // Authenticate
-    send_msg(&mut stream, 0x01, &steam_id.to_le_bytes())?;
-    let (mtype, _payload) = recv_msg(&mut stream)?;
-    if mtype != 0x02 {
-        return Err(format!("auth failed (type {})", mtype));
-    }
+    // Authenticate: steam_id(8) [+ tok_len(u16) + token].
+    // Tag failures so the reconnect loop can tell config problems from blips.
+    let auth = (|| -> Result<(), String> {
+        let mut auth_msg = Vec::with_capacity(9 + token.map_or(0, |t| 2 + t.len()));
+        auth_msg.extend_from_slice(&steam_id.to_le_bytes());
+        if let Some(t) = token {
+            auth_msg.extend_from_slice(&(t.len() as u16).to_le_bytes());
+            auth_msg.extend_from_slice(t.as_bytes());
+        }
+        send_msg(&mut stream, 0x01, &auth_msg)?;
+        let (mtype, _payload) = recv_msg(&mut stream)?;
+        if mtype != 0x02 {
+            return Err(format!("rejected by server (type {})", mtype));
+        }
+        Ok(())
+    })();
+    auth.map_err(|e| format!("auth: {}", e))?;
     eprintln!("[vac-daemon] Authenticated as steam_id={}", steam_id);
 
     let sys = vac_sys::linux::LinuxSystem::new();
@@ -143,17 +154,15 @@ fn handle_server(steam_id: u64, server_addr: &str) -> Result<(), String> {
 
         match mtype {
             0x03 => {
-                // SCAN_CMD: module_id(4) + kyber_pk_len(4) + kyber_pk + dsa_sk_len(4) + dsa_sk + nonce(8)
-                if payload.len() < 16 { continue; }
+                // SCAN_CMD: module_id(4) + kyber_pk_len(4) + kyber_pk + nonce(8)
+                // (no secret key material is sent to the client)
+                if payload.len() < 20 { continue; }
                 let module_id = u32::from_le_bytes(payload[0..4].try_into().unwrap());
                 let kpk_len = i32::from_le_bytes(payload[4..8].try_into().unwrap()) as usize;
-                if 8 + kpk_len + 4 > payload.len() { continue; }
+                if 8 + kpk_len + NONCE_LEN > payload.len() { continue; }
                 let kyber_pk = &payload[8..8 + kpk_len];
-                let dsk_len_off = 8 + kpk_len;
-                let dsk_len = i32::from_le_bytes(payload[dsk_len_off..dsk_len_off + 4].try_into().unwrap()) as usize;
-                if dsk_len_off + 4 + dsk_len + NONCE_LEN > payload.len() { continue; }
-                let dsa_sk = &payload[dsk_len_off + 4..dsk_len_off + 4 + dsk_len];
-                let nonce = &payload[dsk_len_off + 4 + dsk_len..dsk_len_off + 4 + dsk_len + NONCE_LEN];
+                let nonce_off = 8 + kpk_len;
+                let nonce = &payload[nonce_off..nonce_off + NONCE_LEN];
                 let nonce_arr: [u8; NONCE_LEN] = nonce.try_into().unwrap();
 
                 eprintln!("[vac-daemon] Scan cmd: module={}", module_id);
@@ -192,23 +201,16 @@ fn handle_server(steam_id: u64, server_addr: &str) -> Result<(), String> {
                     }
                     8 => {
                         // Hidden process detection: compare ring-0 vs user-mode
-                        let ring0_procs = if let Some(kmod) = VacKmod::open() {
-                            kmod.proc_list().unwrap_or_default()
-                        } else {
-                            Vec::new()
-                        };
+                        match VacKmod::open() {
+                        Some(kmod) => {
+                        let ring0_procs = kmod.proc_list().unwrap_or_default();
                         let user_procs = user_mode_proc_list();
 
                         // Verify PID namespace alignment: if kmod is loaded, make sure
                         // the daemon's own PID exists in the ring-0 list. If not, we're
                         // running in a different PID namespace (e.g., container) and
                         // hidden-proc comparison would be meaningless.
-                        let ns_mismatch = if !ring0_procs.is_empty() {
-                            let my_pid = std::process::id();
-                            !ring0_procs.iter().any(|(pid, _, _)| *pid == my_pid)
-                        } else {
-                            false
-                        };
+                        let ns_mismatch = !ring0_procs.iter().any(|(pid, _, _)| *pid == std::process::id());
 
                         if ns_mismatch {
                             eprintln!("[vac-daemon] PID namespace mismatch (daemon PID {} not in ring-0 list), skipping hidden proc check", std::process::id());
@@ -242,6 +244,15 @@ fn handle_server(steam_id: u64, server_addr: &str) -> Result<(), String> {
                                 raw_payload.extend_from_slice(&(comm_bytes.len() as u32).to_le_bytes());
                                 raw_payload.extend_from_slice(comm_bytes);
                             }
+                        }
+                        }
+                        None => {
+                            // No ring-0 view available — comparison is meaningless and
+                            // would false-flag every user-mode process as "missing".
+                            eprintln!("[vac-daemon] No kmod, skipping hidden proc check");
+                            raw_payload.extend_from_slice(&0u32.to_le_bytes()); // hidden_count = 0
+                            raw_payload.extend_from_slice(&0u32.to_le_bytes()); // missing_count = 0
+                        }
                         }
                     }
                     9 => {
@@ -311,12 +322,14 @@ fn handle_server(steam_id: u64, server_addr: &str) -> Result<(), String> {
                     7 => 200u32,
                     8 => 201u32,
                     9 => 202u32,
+                    10 => 203u32,
                     _ => module_id + 100,
                 };
 
+                // Clients never hold signing keys — encryption-only seal.
                 let seal_key = seal::SealKey {
                     kyber_public_key: kyber_pk.to_vec(),
-                    mldsa65_secret_key: dsa_sk.to_vec(),
+                    mldsa65_secret_key: None,
                 };
                 let sealed = seal::seal(&raw_payload, seal_module_id, &seal_key)
                     .map_err(|_| "seal failed")?;
@@ -344,24 +357,30 @@ fn handle_server(steam_id: u64, server_addr: &str) -> Result<(), String> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("Usage: vac-daemon <server:port> <steam_id>");
+        eprintln!("Usage: vac-daemon <server:port> <steam_id> [access_token]");
         std::process::exit(1);
     }
     let server_addr = &args[1];
     let steam_id: u64 = args[2].parse().expect("invalid steam_id");
+    let token = args.get(3).map(|s| s.as_str());
 
     eprintln!("[vac-daemon] Starting, server={}, steam_id={}", server_addr, steam_id);
 
     loop {
-        match handle_server(steam_id, server_addr) {
+        match handle_server(steam_id, token, server_addr) {
             Ok(()) => {
-                eprintln!("[vac-daemon] Server closed connection");
+                eprintln!("[vac-daemon] Connection closed by server, reconnecting...");
+                std::thread::sleep(Duration::from_secs(5));
+            }
+            Err(e) if e.starts_with("auth:") => {
+                eprintln!("[vac-daemon] {}: {}", e,
+                    "server rejected this client. Check your access token (arg 3) against the link/code from game chat.");
+                std::thread::sleep(Duration::from_secs(30));
             }
             Err(e) => {
                 eprintln!("[vac-daemon] Error: {}", e);
+                std::thread::sleep(Duration::from_secs(10));
             }
         }
-        eprintln!("[vac-daemon] Reconnecting in 10s...");
-        std::thread::sleep(Duration::from_secs(10));
     }
 }

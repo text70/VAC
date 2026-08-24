@@ -52,7 +52,20 @@ namespace Carbon.Plugins
         [DllImport("libvac_integrity", CallingConvention = CallingConvention.Cdecl)]
         private static extern int vac_server_register_client(
             uint steamIdLo, uint steamIdHi,
-            byte[] playerName, int playerNameLen
+            byte[] playerName, int playerNameLen,
+            byte[] token, int tokenLen
+        );
+
+        [DllImport("libvac_integrity", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int vac_server_ensure_client_token(
+            uint steamIdLo, uint steamIdHi,
+            byte[] outBuf, int outCap
+        );
+
+        [DllImport("libvac_integrity", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int vac_server_client_token(
+            uint steamIdLo, uint steamIdHi,
+            byte[] outBuf, int outCap
         );
 
         [DllImport("libvac_integrity", CallingConvention = CallingConvention.Cdecl)]
@@ -93,8 +106,12 @@ namespace Carbon.Plugins
 
         // Enforcement state
         private const int GraceSeconds = 60;
+        // Daemon connections idle between scan rounds and can blip on reconnect;
+        // require the daemon to be absent this long before kicking.
+        private const int DisconnectToleranceSeconds = 30;
         private const int DownloadPort = 28085;
         private readonly Dictionary<ulong, DateTime> _playerConnectTime = new Dictionary<ulong, DateTime>();
+        private readonly Dictionary<ulong, DateTime> _lastDaemonSeen = new Dictionary<ulong, DateTime>();
 
         // HTTP download server hardening
         private const int HttpMaxConcurrent = 16;
@@ -102,14 +119,13 @@ namespace Carbon.Plugins
         private const int HttpStreamBuffer = 65536;
         private const int HttpSocketTimeoutMs = 15000;
         private const int HttpMaxBodyBytes = 512 * 1024 * 1024;
-        private static readonly HashSet<string> AllowedInstallers =
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "/vac-setup.exe", "/" };
 
         // HTTP download server
         private Thread _httpServerThread;
         private volatile bool _httpServerRunning;
         private TcpListener _httpListener;
         private readonly SemaphoreSlim _httpSlots = new SemaphoreSlim(HttpMaxConcurrent);
+        private readonly Dictionary<ulong, string> _playerNames = new Dictionary<ulong, string>();
 
         // -----------------------------------------------------------------------
         // Hook: server initialized
@@ -209,7 +225,7 @@ namespace Carbon.Plugins
                         {
                             try
                             {
-                                HandleHttpClient(client, installerPath);
+                                HandleHttpClient(client);
                             }
                             finally
                             {
@@ -231,7 +247,7 @@ namespace Carbon.Plugins
             _httpServerThread.Start();
         }
 
-        private void HandleHttpClient(TcpClient client, string installerPath)
+        private void HandleHttpClient(TcpClient client)
         {
             try
             {
@@ -257,57 +273,47 @@ namespace Carbon.Plugins
                         return;
                     }
 
-                    string path = parts[1];
-                    if (!AllowedInstallers.Contains(path))
-                    {
-                        WriteResponse(stream, 404, "text/html; charset=utf-8",
-                            "<html><body><h2>404 Not Found</h2></body></html>");
-                        return;
-                    }
+                    string rawPath = parts[1];
+                    int qIdx = rawPath.IndexOf('?');
+                    string route = qIdx >= 0 ? rawPath.Substring(0, qIdx) : rawPath;
+                    string query = qIdx >= 0 ? rawPath.Substring(qIdx + 1) : "";
 
-                    if (path == "/")
-                    {
-                        string index = "<html><body>" +
-                            "<h2>VAC Anti-Cheat Client</h2>" +
-                            "<p><a href='/vac-setup.exe'>Download Windows Client</a></p>" +
-                            "<p><small>Install and run to play on this server.</small></p>" +
-                            "</body></html>";
-                        WriteResponse(stream, 200, "text/html; charset=utf-8", index);
-                        return;
-                    }
+                    // Host header (for baking the daemon server address into configs)
+                    string hostHeader = ExtractHeader(request, "Host:");
 
-                    if (!File.Exists(installerPath))
+                    switch (route.ToLowerInvariant())
                     {
-                        WriteResponse(stream, 404, "text/html; charset=utf-8",
-                            "<html><body><h2>404 vac-setup.exe not available</h2></body></html>");
-                        return;
-                    }
+                        case "/":
+                            WriteResponse(stream, 200, "text/html; charset=utf-8",
+                                "<html><body>" +
+                                "<h2>VAC Anti-Cheat Client</h2>" +
+                                "<p>Use the download link from the in-game chat message.</p>" +
+                                "<p><a href='/vac-setup.exe'>Download installer only (manual setup)</a></p>" +
+                                "</body></html>");
+                            return;
 
-                    var info = new FileInfo(installerPath);
-                    if (info.Length <= 0 || info.Length > HttpMaxBodyBytes)
-                    {
-                        WriteResponse(stream, 404, "text/html; charset=utf-8",
-                            "<html><body><h2>404 vac-setup.exe unavailable</h2></body></html>");
-                        return;
-                    }
+                        case "/vac-setup.exe":
+                            ServeInstaller(stream);
+                            return;
 
-                    string header = "HTTP/1.1 200 OK\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "Content-Disposition: attachment; filename=vac-setup.exe\r\n" +
-                        "Content-Length: " + info.Length + "\r\n" +
-                        "Cache-Control: no-store\r\n" +
-                        "Connection: close\r\n\r\n";
-                    byte[] headerBytes2 = Encoding.ASCII.GetBytes(header);
-                    stream.Write(headerBytes2, 0, headerBytes2.Length);
+                        case "/setup":
+                        case "/vac-setup.zip":
+                            ServeSetupBundle(stream, query, hostHeader);
+                            return;
 
-                    using (var fs = new FileStream(installerPath, FileMode.Open, FileAccess.Read, FileShare.Read))
-                    {
-                        var buffer = new byte[HttpStreamBuffer];
-                        int read;
-                        while (_httpServerRunning && (read = fs.Read(buffer, 0, buffer.Length)) > 0)
-                        {
-                            stream.Write(buffer, 0, read);
-                        }
+                        case "/vac/status":
+                            ServeStatusJson(stream);
+                            return;
+
+                        case "/vac/status.html":
+                        case "/vac/status/page":
+                            ServeStatusHtml(stream);
+                            return;
+
+                        default:
+                            WriteResponse(stream, 404, "text/html; charset=utf-8",
+                                "<html><body><h2>404 Not Found</h2></body></html>");
+                            return;
                     }
                 }
             }
@@ -322,6 +328,360 @@ namespace Carbon.Plugins
             catch (Exception e)
             {
                 Logger.Warn("VacIntegrity: HTTP client error: " + e.Message);
+            }
+        }
+
+        private static string ExtractHeader(string request, string headerName)
+        {
+            foreach (string line in request.Split(new[] { "\r\n" }, StringSplitOptions.None))
+            {
+                if (line.StartsWith(headerName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return line.Substring(headerName.Length).Trim();
+                }
+            }
+            return "";
+        }
+
+        private static bool IsValidToken(string token)
+        {
+            if (string.IsNullOrEmpty(token) || token.Length != 32)
+                return false;
+            foreach (char c in token)
+            {
+                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+                    return false;
+            }
+            return true;
+        }
+
+        private static string GetQueryParam(string query, string key)
+        {
+            foreach (string pair in query.Split('&'))
+            {
+                int eq = pair.IndexOf('=');
+                if (eq > 0 && string.Equals(pair.Substring(0, eq), key, StringComparison.OrdinalIgnoreCase))
+                {
+                    return pair.Substring(eq + 1);
+                }
+            }
+            return "";
+        }
+
+        /// GET /setup?t=<token>
+        /// Serves a ZIP containing vac-setup.exe + vac-preload.ini with the
+        /// daemon server address and access code baked in — zero typing.
+        private void ServeSetupBundle(NetworkStream stream, string query, string hostHeader)
+        {
+            string token = GetQueryParam(query, "t");
+            if (!IsValidToken(token))
+            {
+                WriteResponse(stream, 400, "text/plain",
+                    "Missing or invalid access code. Use the link from the in-game chat message.");
+                return;
+            }
+
+            string installerPath = Path.Combine(
+                Environment.CurrentDirectory, "carbon", "native", "vac-setup.exe");
+            if (!File.Exists(installerPath))
+            {
+                WriteResponse(stream, 404, "text/plain", "Installer not available yet. Try again shortly.");
+                return;
+            }
+
+            string daemonHost = hostHeader;
+            if (string.IsNullOrEmpty(daemonHost))
+                daemonHost = GetServerIp() + ":" + 28084;
+            // Strip any explicit port the user browsed on; daemon uses 28084.
+            int colon = daemonHost.LastIndexOf(':');
+            if (colon > 0 && daemonHost.IndexOf(':') == colon && !daemonHost.Contains("]"))
+                daemonHost = daemonHost.Substring(0, colon);
+
+            string preloadIni = "# VAC client configuration (auto-generated)\r\n" +
+                "server=" + daemonHost + ":28084\r\n" +
+                "token=" + token + "\r\n";
+
+            byte[] exeBytes;
+            try
+            {
+                exeBytes = File.ReadAllBytes(installerPath);
+            }
+            catch (Exception e)
+            {
+                WriteResponse(stream, 500, "text/plain", "Failed to read installer: " + e.Message);
+                return;
+            }
+
+            byte[] zip = ZipBuilder.BuildZip(new[]
+            {
+                new ZipBuilder.Entry { Name = "vac-setup.exe", Data = exeBytes },
+                new ZipBuilder.Entry { Name = "vac-preload.ini", Data = Encoding.ASCII.GetBytes(preloadIni) },
+            });
+
+            string header = "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: application/zip\r\n" +
+                "Content-Disposition: attachment; filename=vac-setup.zip\r\n" +
+                "Content-Length: " + zip.Length + "\r\n" +
+                "Cache-Control: no-store\r\n" +
+                "Connection: close\r\n\r\n";
+            byte[] headerBytes = Encoding.ASCII.GetBytes(header);
+            stream.Write(headerBytes, 0, headerBytes.Length);
+            stream.Write(zip, 0, zip.Length);
+        }
+
+        private void ServeInstaller(NetworkStream stream)
+        {
+            string installerPath = Path.Combine(
+                Environment.CurrentDirectory, "carbon", "native", "vac-setup.exe");
+
+            var info = new FileInfo(installerPath);
+            if (!File.Exists(installerPath) || info.Length <= 0 || info.Length > HttpMaxBodyBytes)
+            {
+                WriteResponse(stream, 404, "text/html; charset=utf-8",
+                    "<html><body><h2>404 vac-setup.exe not available</h2></body></html>");
+                return;
+            }
+
+            string header = "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: application/octet-stream\r\n" +
+                "Content-Disposition: attachment; filename=vac-setup.exe\r\n" +
+                "Content-Length: " + info.Length + "\r\n" +
+                "Cache-Control: no-store\r\n" +
+                "Connection: close\r\n\r\n";
+            byte[] headerBytes = Encoding.ASCII.GetBytes(header);
+            stream.Write(headerBytes, 0, headerBytes.Length);
+
+            using (var fs = new FileStream(installerPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                var buffer = new byte[HttpStreamBuffer];
+                int read;
+                while (_httpServerRunning && (read = fs.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    stream.Write(buffer, 0, read);
+                }
+            }
+        }
+
+        /// GET /vac/status — machine-readable state for admin dashboards.
+        /// Read-only: never includes tokens or key material.
+        private void ServeStatusJson(NetworkStream stream)
+        {
+            var sb = new StringBuilder("{\"players\":[");
+            bool first = true;
+            lock (_playerNames)
+            {
+                foreach (var kvp in _playerNames)
+                {
+                    ulong steamId = kvp.Key;
+                    uint lo = (uint)(steamId & 0xFFFFFFFF);
+                    uint hi = (uint)((steamId >> 32) & 0xFFFFFFFF);
+                    int connected = vac_server_daemon_connected(lo, hi);
+                    int enrolled = vac_server_client_token(lo, hi, null, 0); // -1 = none
+                    if (!first) sb.Append(',');
+                    first = false;
+                    string name = kvp.Value ?? "";
+                    sb.Append("{\"steamid\":\"").Append(steamId).Append("\",\"name\":")
+                      .Append(JsonEscape(name)).Append(",\"daemon_connected\":")
+                      .Append(connected == 1 ? "true" : "false")
+                      .Append(",\"enrolled\":").Append(enrolled >= 0 ? "true" : "false").Append('}');
+                }
+            }
+            sb.Append("],\"generated\":\"").Append(DateTime.UtcNow.ToString("o")).Append("\"}");
+
+            byte[] body = Encoding.UTF8.GetBytes(sb.ToString());
+            string header = "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Content-Length: " + body.Length + "\r\n" +
+                "Cache-Control: no-store\r\n" +
+                "Connection: close\r\n\r\n";
+            byte[] hb = Encoding.ASCII.GetBytes(header);
+            stream.Write(hb, 0, hb.Length);
+            stream.Write(body, 0, body.Length);
+        }
+
+        /// GET /vac/status.html — minimal auto-refreshing page suitable for
+        /// embedding as a Carbon dashboard custom tab (iframe).
+        private void ServeStatusHtml(NetworkStream stream)
+        {
+            var sb = new StringBuilder();
+            sb.Append("<!DOCTYPE html><html><head><meta http-equiv=\"refresh\" content=\"10\">");
+            sb.Append("<title>VAC Status</title><style>");
+            sb.Append("body{background:#15181e;color:#d7dae0;font-family:monospace;margin:24px}");
+            sb.Append("table{border-collapse:collapse;width:100%}");
+            sb.Append("th,td{padding:6px 12px;border-bottom:1px solid #2a2f3a;text-align:left}");
+            sb.Append(".ok{color:#7ec97e}.bad{color:#e06c75}.warn{color:#e5c07b}");
+            sb.Append("</style></head><body><h2>VAC Anti-Cheat Status</h2><table>");
+            sb.Append("<tr><th>Player</th><th>Steam ID</th><th>Daemon</th><th>Enrolled</th></tr>");
+            lock (_playerNames)
+            {
+                foreach (var kvp in _playerNames)
+                {
+                    ulong steamId = kvp.Key;
+                    uint lo = (uint)(steamId & 0xFFFFFFFF);
+                    uint hi = (uint)((steamId >> 32) & 0xFFFFFFFF);
+                    int connected = vac_server_daemon_connected(lo, hi);
+                    int enrolled = vac_server_client_token(lo, hi, null, 0);
+                    sb.Append("<tr><td>").Append(HtmlEncode(kvp.Value ?? "?"));
+                    sb.Append("</td><td>").Append(steamId).Append("</td>");
+                    sb.Append("<td class='").Append(connected == 1 ? "ok'>CONNECTED" : "warn'>waiting…").Append("</td>");
+                    sb.Append("<td class='").Append(enrolled >= 0 ? "ok'>yes" : "bad'>no").Append("</td></tr>");
+                }
+            }
+            sb.Append("</table><p style='color:#5c6370'>Auto-refreshes every 10s · tokens are never shown</p></body></html>");
+
+            byte[] body = Encoding.UTF8.GetBytes(sb.ToString());
+            string header = "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: text/html; charset=utf-8\r\n" +
+                "Content-Length: " + body.Length + "\r\n" +
+                "Cache-Control: no-store\r\n" +
+                "Connection: close\r\n\r\n";
+            byte[] hb = Encoding.ASCII.GetBytes(header);
+            stream.Write(hb, 0, hb.Length);
+            stream.Write(body, 0, body.Length);
+        }
+
+        private static string JsonEscape(string s)
+        {
+            if (s == null) return "\"\"";
+            var sb = new StringBuilder("\"");
+            foreach (char c in s)
+            {
+                switch (c)
+                {
+                    case '"': sb.Append("\\\""); break;
+                    case '\\': sb.Append("\\\\"); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\r': sb.Append("\\r"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    default:
+                        if (c < 0x20) sb.AppendFormat("\\u{0:x4}", (int)c);
+                        else sb.Append(c);
+                        break;
+                }
+            }
+            sb.Append('"');
+            return sb.ToString();
+        }
+
+        private static string HtmlEncode(string s)
+        {
+            if (s == null) return "";
+            return s.Replace("&", "&amp;").Replace("<", "&lt;")
+                    .Replace(">", "&gt;").Replace("\"", "&quot;");
+        }
+
+        // -------------------------------------------------------------------
+        // Minimal store-only ZIP writer (no compression, no external deps).
+        // Used to bundle vac-setup.exe + vac-preload.ini for the magic link.
+        // -------------------------------------------------------------------
+        private static class ZipBuilder
+        {
+            public struct Entry
+            {
+                public string Name;
+                public byte[] Data;
+            }
+
+            public static byte[] BuildZip(Entry[] entries)
+            {
+                // two passes: need total size first? Not necessary — build with lists.
+                var central = new List<byte[]>();
+                using (var ms = new MemoryStream())
+                {
+                    foreach (var e in entries)
+                    {
+                        uint entryCrc = Crc32(e.Data);
+                        int offset = (int)ms.Position;
+                        byte[] nameBytes = Encoding.ASCII.GetBytes(e.Name);
+
+                        // Local file header
+                        WriteLE32(ms, 0x04034b50);
+                        WriteLE16(ms, 20);          // version needed
+                        WriteLE16(ms, 0);           // flags
+                        WriteLE16(ms, 0);           // method: stored
+                        WriteLE16(ms, 0);           // mod time
+                        WriteLE16(ms, 0x21);        // mod date (1980-01-01)
+                        WriteLE32(ms, entryCrc);
+                        WriteLE32(ms, (uint)e.Data.Length);
+                        WriteLE32(ms, (uint)e.Data.Length);
+                        WriteLE16(ms, (ushort)nameBytes.Length);
+                        WriteLE16(ms, 0);           // extra len
+                        ms.Write(nameBytes, 0, nameBytes.Length);
+                        ms.Write(e.Data, 0, e.Data.Length);
+
+                        // Central directory record
+                        var cd = new MemoryStream();
+                        WriteLE32(cd, 0x02014b50);
+                        WriteLE16(cd, 20);          // version made by
+                        WriteLE16(cd, 20);          // version needed
+                        WriteLE16(cd, 0);
+                        WriteLE16(cd, 0);
+                        WriteLE16(cd, 0);
+                        WriteLE16(cd, 0x21);
+                        WriteLE32(cd, entryCrc);
+                        WriteLE32(cd, (uint)e.Data.Length);
+                        WriteLE32(cd, (uint)e.Data.Length);
+                        WriteLE16(cd, (ushort)nameBytes.Length);
+                        WriteLE16(cd, 0);           // extra
+                        WriteLE16(cd, 0);           // comment
+                        WriteLE16(cd, 0);           // disk number
+                        WriteLE16(cd, 0);           // internal attrs
+                        WriteLE32(cd, 0);           // external attrs
+                        WriteLE32(cd, (uint)offset);
+                        cd.Write(nameBytes, 0, nameBytes.Length);
+                        central.Add(cd.ToArray());
+                    }
+
+                    uint cdOffset = (uint)ms.Position;
+                    uint cdSize = 0;
+                    foreach (var rec in central)
+                    {
+                        ms.Write(rec, 0, rec.Length);
+                        cdSize += (uint)rec.Length;
+                    }
+
+                    // EOCD
+                    WriteLE32(ms, 0x06054b50);
+                    WriteLE16(ms, 0);
+                    WriteLE16(ms, 0);
+                    WriteLE16(ms, (ushort)entries.Length);
+                    WriteLE16(ms, (ushort)entries.Length);
+                    WriteLE32(ms, cdSize);
+                    WriteLE32(ms, cdOffset);
+                    WriteLE16(ms, 0);
+
+                    return ms.ToArray();
+                }
+            }
+
+            private static void WriteLE16(Stream s, ushort v)
+            {
+                s.WriteByte((byte)(v & 0xFF));
+                s.WriteByte((byte)((v >> 8) & 0xFF));
+            }
+
+            private static void WriteLE32(Stream s, uint v)
+            {
+                s.WriteByte((byte)(v & 0xFF));
+                s.WriteByte((byte)((v >> 8) & 0xFF));
+                s.WriteByte((byte)((v >> 16) & 0xFF));
+                s.WriteByte((byte)((v >> 24) & 0xFF));
+            }
+
+            private static uint Crc32(byte[] data)
+            {
+                uint crc = 0xFFFFFFFFu;
+                foreach (byte b in data)
+                {
+                    crc ^= b;
+                    for (int i = 0; i < 8; i++)
+                    {
+                        bool bit = (crc & 1) != 0;
+                        crc >>= 1;
+                        if (bit) crc ^= 0xEDB88320u;
+                    }
+                }
+                return ~crc;
             }
         }
 
@@ -395,7 +755,18 @@ namespace Carbon.Plugins
                 uint hi = (uint)((steamId >> 32) & 0xFFFFFFFF);
 
                 int connected = vac_server_daemon_connected(lo, hi);
-                if (connected == 0)
+                if (connected == 1)
+                {
+                    _lastDaemonSeen[steamId] = DateTime.UtcNow;
+                    continue;
+                }
+
+                DateTime lastSeen;
+                bool everSeen = _lastDaemonSeen.TryGetValue(steamId, out lastSeen);
+                bool absentLongEnough = !everSeen ||
+                    (DateTime.UtcNow - lastSeen).TotalSeconds >= DisconnectToleranceSeconds;
+
+                if (absentLongEnough)
                 {
                     BasePlayer player = BasePlayer.FindByID(steamId);
                     if (player != null && player.IsConnected)
@@ -481,13 +852,40 @@ namespace Carbon.Plugins
             uint lo = (uint)(steamId & 0xFFFFFFFF);
             uint hi = (uint)((steamId >> 32) & 0xFFFFFFFF);
             byte[] nameBytes = Encoding.UTF8.GetBytes(player.displayName ?? "");
-            vac_server_register_client(lo, hi, nameBytes, nameBytes.Length);
 
+            // Register (name-only; preserves any existing enrollment token),
+            // then ensure enrollment: stable per-player token persisted by the
+            // native lib — installed daemons survive relogs AND server restarts.
+            vac_server_register_client(lo, hi, nameBytes, nameBytes.Length, null, 0);
+            string token = EnsureToken(lo, hi);
+            if (token == null)
+            {
+                Logger.Warn("VacIntegrity: failed to ensure token for " + steamId);
+                return;
+            }
+
+            // Magic link: serves a ZIP containing the installer + a preload ini
+            // with server address and access code already baked in.
             string serverIp = GetServerIp();
-            string url = $"http://{serverIp}:{DownloadPort}/";
-            player.ChatMessage("Download the VAC client: " + url);
+            string url = $"http://{serverIp}:{DownloadPort}/setup?t={token}";
+            player.ChatMessage("VAC protection required: download " + url);
+            player.ChatMessage("Extract the ZIP anywhere and run vac-setup.exe - no typing needed.");
+            player.ChatMessage("Your access code (if asked): " + token);
 
             _playerConnectTime[steamId] = DateTime.UtcNow;
+            lock (_playerNames)
+            {
+                _playerNames[steamId] = player.displayName ?? steamId.ToString();
+            }
+        }
+
+        private string EnsureToken(uint lo, uint hi)
+        {
+            byte[] buf = new byte[128];
+            int n = vac_server_ensure_client_token(lo, hi, buf, buf.Length);
+            if (n <= 0 || n > buf.Length)
+                return null;
+            return Encoding.UTF8.GetString(buf, 0, n);
         }
 
         // -----------------------------------------------------------------------
@@ -501,6 +899,10 @@ namespace Carbon.Plugins
             uint hi = (uint)((steamId >> 32) & 0xFFFFFFFF);
             vac_server_unregister_client(lo, hi);
             _playerConnectTime.Remove(steamId);
+            lock (_playerNames)
+            {
+                _playerNames.Remove(steamId);
+            }
         }
 
         // -----------------------------------------------------------------------

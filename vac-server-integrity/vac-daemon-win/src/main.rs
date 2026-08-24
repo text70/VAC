@@ -19,14 +19,201 @@ fn main() {
 
 #[cfg(windows)]
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    // vac-daemon-win.exe [--doctor] [config_path]
+    if args.iter().any(|a| a == "--doctor") {
+        let cfg_path = args.get(2).cloned().unwrap_or_else(|| CONFIG_PATH.to_string());
+        std::process::exit(doctor(&cfg_path));
+    }
     run_daemon();
+}
+
+#[cfg(windows)]
+fn doctor(cfg_path: &str) -> i32 {
+    use std::fs;
+    use std::net::TcpStream;
+
+    println!("VAC client diagnostics");
+    println!("======================");
+    let mut fails = 0i32;
+
+    // 1. Config file
+    let content = fs::read_to_string(cfg_path).unwrap_or_default();
+    if content.is_empty() {
+        println!("[FAIL] Config: {} not found or empty", cfg_path);
+        fails += 1;
+        println!("\nResult: {} problem(s). Re-run the installer from the link in game chat.", fails);
+        return 1;
+    }
+    let config = load_config(cfg_path);
+    println!("[OK]   Config: {}", cfg_path);
+
+    // 2. Server address configured
+    if config.server.is_empty() {
+        println!("[FAIL] Server address not set");
+        fails += 1;
+    } else {
+        println!("[OK]   Server address: {}", config.server);
+    }
+
+    // 3. Steam ID
+    match config.steam_id.or_else(find_steam_id) {
+        Some(id) => println!("[OK]   Steam ID: {}", id),
+        None => {
+            println!("[FAIL] Steam ID: could not discover (set steam_id= in {})", cfg_path);
+            fails += 1;
+        }
+    }
+
+    // 4. Access code
+    match &config.token {
+        Some(t) => println!("[OK]   Access code present ({} chars)", t.len()),
+        None => println!("[WARN] No access code configured - server may reject connections"),
+    }
+
+    // 5. Kernel driver (informational — user-mode fallback is supported)
+    let driver = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(r"\\.\Vac");
+    match driver {
+        Ok(_) => println!("[OK]   Kernel driver: loaded (full protection)"),
+        Err(_) => println!(
+            "[WARN] Kernel driver: not loaded (basic user-mode protection).\n\
+                   \x20      This is expected until the driver is Microsoft-signed."
+        ),
+    }
+
+    // 6. Reachability of the VAC listener
+    if !config.server.is_empty() {
+        let addr = if config.server.contains(':') {
+            config.server.clone()
+        } else {
+            format!("{}:28084", config.server)
+        };
+        match TcpStream::connect_timeout(
+            &addr.parse().unwrap_or_else(|_| {
+                "127.0.0.1:0".parse().unwrap()
+            }),
+            Duration::from_secs(3),
+        ) {
+            Ok(_) => println!("[OK]   Listener reachable at {}", addr),
+            Err(e) => {
+                println!("[FAIL] Listener unreachable at {} ({})", addr, e);
+                fails += 1;
+            }
+        }
+    }
+
+    println!("\nResult: {} problem(s).", fails);
+    if fails == 0 {
+        println!("VAC client looks good. Launch Rust and join the server.");
+        0
+    } else {
+        println!("Re-open the download link from the server chat and reinstall.");
+        1
+    }
+}
+
+#[cfg(windows)]
+const CONFIG_PATH: &str = "vac-daemon.ini";
+
+/// Daemon configuration read from vac-daemon.ini.
+#[cfg(windows)]
+struct Config {
+    server: String,
+    steam_id: Option<u64>,
+    token: Option<String>,
+}
+
+#[cfg(windows)]
+fn load_config(path: &str) -> Config {
+    use std::fs;
+
+    let content = fs::read_to_string(path).unwrap_or_default();
+    let mut server = String::new();
+    let mut steam_id: Option<u64> = None;
+    let mut token: Option<String> = None;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if let Some(eq) = line.find('=') {
+            let key = line[..eq].trim().to_lowercase();
+            let val = line[eq + 1..].trim();
+            match key.as_str() {
+                "server" => server = val.to_string(),
+                "steam_id" => steam_id = val.parse().ok(),
+                "token" => {
+                    if !val.is_empty() {
+                        token = Some(val.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Config { server, steam_id, token }
+}
+
+/// Steam ID discovery (Windows): loginusers.vdf in the usual locations.
+#[cfg(windows)]
+fn find_steam_id() -> Option<u64> {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let paths = [
+        r"C:\Program Files (x86)\Steam\config\loginusers.vdf",
+        r"C:\Program Files\Steam\config\loginusers.vdf",
+    ];
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        let mut p = PathBuf::from(&profile);
+        p.push(r"AppData\Local\Steam\config\loginusers.vdf");
+        if p.exists() {
+            return parse_loginusers_vdf(&fs::read_to_string(p).unwrap_or_default());
+        }
+    }
+    for p in &paths {
+        if let Ok(content) = fs::read_to_string(p) {
+            return parse_loginusers_vdf(&content);
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn parse_loginusers_vdf(content: &str) -> Option<u64> {
+    if let Some(start) = content.find("\"users\"") {
+        if let Some(brace) = content[start..].find('{') {
+            let rest = &content[start + brace + 1..];
+            let mut depth = 1i32;
+            let mut i = 0;
+            while i < rest.len() && depth > 0 {
+                let c = rest.as_bytes()[i];
+                if c == b'{' {
+                    depth += 1;
+                } else if c == b'}' {
+                    depth -= 1;
+                } else if c == b'"' && depth == 1 {
+                    let end = rest[i + 1..].find('"').map(|p| i + 1 + p)?;
+                    let key = &rest[i + 1..end];
+                    if let Ok(sid) = key.parse::<u64>() {
+                        return Some(sid);
+                    }
+                    i = end;
+                }
+                i += 1;
+            }
+        }
+    }
+    None
 }
 
 #[cfg(windows)]
 fn run_daemon() {
     use std::collections::HashSet;
-    use std::fs;
-    use std::path::PathBuf;
 
     use vac_client_core::run_module;
     use vac_core::buffer::DataBuffer;
@@ -36,88 +223,6 @@ fn run_daemon() {
     use vac_sys::win32_table;
 
     const NONCE_LEN: usize = 8;
-    const CONFIG_PATH: &str = "vac-daemon.ini";
-
-    // -----------------------------------------------------------------------
-    // Config
-    // -----------------------------------------------------------------------
-    struct Config {
-        server: String,
-        steam_id: Option<u64>,
-    }
-
-    fn load_config(path: &str) -> Config {
-        let content = fs::read_to_string(path).unwrap_or_default();
-        let mut server = String::new();
-        let mut steam_id: Option<u64> = None;
-
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
-                continue;
-            }
-            if let Some(eq) = line.find('=') {
-                let key = line[..eq].trim().to_lowercase();
-                let val = line[eq + 1..].trim();
-                match key.as_str() {
-                    "server" => server = val.to_string(),
-                    "steam_id" => steam_id = val.parse().ok(),
-                    _ => {}
-                }
-            }
-        }
-        Config { server, steam_id }
-    }
-
-    // -----------------------------------------------------------------------
-    // Steam ID discovery (Windows)
-    // -----------------------------------------------------------------------
-    fn find_steam_id() -> Option<u64> {
-        let paths = [
-            r"C:\Program Files (x86)\Steam\config\loginusers.vdf",
-            r"C:\Program Files\Steam\config\loginusers.vdf",
-        ];
-        if let Ok(profile) = std::env::var("USERPROFILE") {
-            let mut p = PathBuf::from(&profile);
-            p.push(r"AppData\Local\Steam\config\loginusers.vdf");
-            if p.exists() {
-                return parse_loginusers_vdf(&fs::read_to_string(p).unwrap_or_default());
-            }
-        }
-        for p in &paths {
-            if let Ok(content) = fs::read_to_string(p) {
-                return parse_loginusers_vdf(&content);
-            }
-        }
-        None
-    }
-
-    fn parse_loginusers_vdf(content: &str) -> Option<u64> {
-        if let Some(start) = content.find("\"users\"") {
-            if let Some(brace) = content[start..].find('{') {
-                let rest = &content[start + brace + 1..];
-                let mut depth = 1i32;
-                let mut i = 0;
-                while i < rest.len() && depth > 0 {
-                    let c = rest.as_bytes()[i];
-                    if c == b'{' {
-                        depth += 1;
-                    } else if c == b'}' {
-                        depth -= 1;
-                    } else if c == b'"' && depth == 1 {
-                        let end = rest[i + 1..].find('"').map(|p| i + 1 + p)?;
-                        let key = &rest[i + 1..end];
-                        if let Ok(sid) = key.parse::<u64>() {
-                            return Some(sid);
-                        }
-                        i = end;
-                    }
-                    i += 1;
-                }
-            }
-        }
-        None
-    }
 
     // -----------------------------------------------------------------------
     // Win32 direct FFI for module 9 (memory region enumeration)
@@ -138,7 +243,6 @@ fn run_daemon() {
     const PAGE_GUARD: u32 = 0x100;
     const MEM_COMMIT: u32 = 0x1000;
     const MEM_IMAGE: u32 = 0x1000000;
-    const MEM_PRIVATE: u32 = 0x20000;
 
     extern "system" {
         fn GetCurrentProcess() -> *mut std::ffi::c_void;
@@ -288,9 +392,46 @@ fn run_daemon() {
     // -----------------------------------------------------------------------
     fn module8_hidden_procs(kmod: Option<&Win32Kmod>) -> Vec<u8> {
         let mut raw = Vec::new();
-        let ring0_procs = kmod.and_then(|k| k.proc_list().ok()).unwrap_or_default();
+        // Without a trusted ring-0 view the comparison is meaningless and would
+        // false-flag every user-mode process as "missing from ring-0" — report 0/0.
+        let Some(kmod) = kmod else {
+            raw.extend_from_slice(&0u32.to_le_bytes());
+            raw.extend_from_slice(&0u32.to_le_bytes());
+            return raw;
+        };
+        let ring0_procs = kmod.proc_list().unwrap_or_default();
+
+        // Sanity: our own PID must be visible to the driver. If not, the two
+        // views cannot be meaningfully compared — report 0/0 instead of a ban.
+        let my_pid = std::process::id();
+        if !ring0_procs.iter().any(|(p, _, _)| *p == my_pid) {
+            eprintln!("[vac-daemon-win] Own PID {} missing from ring-0 list, skipping hidden proc check", my_pid);
+            raw.extend_from_slice(&0u32.to_le_bytes());
+            raw.extend_from_slice(&0u32.to_le_bytes());
+            return raw;
+        }
+
         let sys = vac_sys::win32::Win32System::new();
         let user_procs = sys.enumerate_processes().unwrap_or_default();
+
+        // Exclude kernel artifacts: pid 0/4 (Idle/System) have differing image
+        // names between ZwQuerySystemInformation and Toolhelp32; Memory
+        // Compression / Secure System / Registry appear only in the ring-0
+        // walk on Win10+ and are not user-mode hiding candidates.
+        const ARTIFACT_NAMES: &[&str] = &[
+            "system idle process", "[system process]", "system",
+            "memory compression", "secure system", "registry",
+        ];
+        let is_artifact = |name: &str| -> bool {
+            let n = name.to_lowercase();
+            ARTIFACT_NAMES.iter().any(|a| n == *a)
+        };
+        let ring0_procs: Vec<_> = ring0_procs.into_iter()
+            .filter(|(p, _, name)| *p > 4 && !is_artifact(name))
+            .collect();
+        let user_procs: Vec<_> = user_procs.into_iter()
+            .filter(|(p, _, name)| *p > 4 && !is_artifact(name))
+            .collect();
 
         let ring0_pids: HashSet<u32> = ring0_procs.iter().map(|(pid, _, _)| *pid).collect();
         let user_pids: HashSet<u32> = user_procs.iter().map(|(pid, _, _)| *pid).collect();
@@ -366,6 +507,7 @@ fn run_daemon() {
     // -----------------------------------------------------------------------
     fn handle_server(
         steam_id: u64,
+        token: Option<&str>,
         server_addr: &str,
         kmod: Option<&Win32Kmod>,
     ) -> Result<(), String> {
@@ -374,11 +516,23 @@ fn run_daemon() {
         stream.set_read_timeout(Some(Duration::from_secs(30)))
             .map_err(|e| format!("timeout: {}", e))?;
 
-        send_msg(&mut stream, 0x01, &steam_id.to_le_bytes())?;
-        let (mtype, _) = recv_msg(&mut stream)?;
-        if mtype != 0x02 {
-            return Err(format!("auth failed type={}", mtype));
-        }
+        // AUTH: steam_id(8) [+ tok_len(u16) + token]. Tag failures so the
+        // reconnect loop can tell config problems from network blips.
+        let auth = (|| -> Result<(), String> {
+            let mut auth_msg = Vec::with_capacity(9 + token.map_or(0, |t| 2 + t.len()));
+            auth_msg.extend_from_slice(&steam_id.to_le_bytes());
+            if let Some(t) = token {
+                auth_msg.extend_from_slice(&(t.len() as u16).to_le_bytes());
+                auth_msg.extend_from_slice(t.as_bytes());
+            }
+            send_msg(&mut stream, 0x01, &auth_msg)?;
+            let (mtype, _) = recv_msg(&mut stream)?;
+            if mtype != 0x02 {
+                return Err(format!("rejected by server (type={})", mtype));
+            }
+            Ok(())
+        })();
+        auth.map_err(|e| format!("auth: {}", e))?;
 
         loop {
             let (mtype, payload) = recv_msg(&mut stream)?;
@@ -388,20 +542,18 @@ fn run_daemon() {
                 }
                 continue;
             }
-            if payload.len() < 16 {
+            if payload.len() < 20 {
                 continue;
             }
 
+            // SCAN_CMD: module_id(4) + kyber_pk_len(4) + kyber_pk + nonce(8)
+            // (no secret key material is sent to the client)
             let module_id = u32::from_le_bytes(payload[0..4].try_into().unwrap());
             let kpk_len = i32::from_le_bytes(payload[4..8].try_into().unwrap()) as usize;
-            if 8 + kpk_len + 4 > payload.len() { continue; }
+            if 8 + kpk_len + NONCE_LEN > payload.len() { continue; }
             let kyber_pk = &payload[8..8 + kpk_len];
-
-            let off = 8 + kpk_len;
-            let dsk_len = i32::from_le_bytes(payload[off..off + 4].try_into().unwrap()) as usize;
-            if off + 4 + dsk_len + NONCE_LEN > payload.len() { continue; }
-            let dsa_sk = &payload[off + 4..off + 4 + dsk_len];
-            let nonce = &payload[off + 4 + dsk_len..off + 4 + dsk_len + NONCE_LEN];
+            let nonce_off = 8 + kpk_len;
+            let nonce = &payload[nonce_off..nonce_off + NONCE_LEN];
 
             let mut scan_data = Vec::new();
             scan_data.extend_from_slice(nonce);
@@ -422,12 +574,13 @@ fn run_daemon() {
             }
 
             let seal_mid = match module_id {
-                7 => 200, 8 => 201, 9 => 202,
+                7 => 200, 8 => 201, 9 => 202, 10 => 203,
                 m => m + 100,
             };
+            // Clients never hold signing keys — encryption-only seal.
             let key = seal::SealKey {
                 kyber_public_key: kyber_pk.to_vec(),
-                mldsa65_secret_key: dsa_sk.to_vec(),
+                mldsa65_secret_key: None,
             };
             let sealed = seal::seal(&scan_data, seal_mid, &key).map_err(|_| "seal failed")?;
 
@@ -465,10 +618,22 @@ fn run_daemon() {
     eprintln!("[vac-daemon-win] server={}, steam_id={}", config.server, steam_id);
 
     loop {
-        match handle_server(steam_id, &config.server, kmod.as_ref()) {
-            Ok(()) => eprintln!("[vac-daemon-win] Connection closed"),
-            Err(e) => eprintln!("[vac-daemon-win] Error: {}", e),
+        match handle_server(steam_id, config.token.as_deref(), &config.server, kmod.as_ref()) {
+            Ok(()) => {
+                eprintln!("[vac-daemon-win] Connection closed by server, reconnecting...");
+                std::thread::sleep(Duration::from_secs(5));
+            }
+            Err(e) if e.starts_with("auth:") => {
+                // Config-level problem (bad access code / not enrolled).
+                // Retrying fast just burns CPU — back off and tell the player.
+                eprintln!("[vac-daemon-win] {}: {}", e,
+                    "server rejected this client. Run 'vac-daemon-win.exe --doctor', or re-open the download link from game chat and reinstall.");
+                std::thread::sleep(Duration::from_secs(30));
+            }
+            Err(e) => {
+                eprintln!("[vac-daemon-win] Error: {}", e);
+                std::thread::sleep(Duration::from_secs(10));
+            }
         }
-        std::thread::sleep(Duration::from_secs(10));
     }
 }

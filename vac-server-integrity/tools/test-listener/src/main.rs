@@ -12,8 +12,36 @@ fn register_player(sid: u64, n: u64) {
     let lo = sid as u32;
     let hi = (sid >> 32) as u32;
     let name_bytes = name.as_bytes();
-    vac_integrity::vac_server_register_client(lo, hi, name_bytes.as_ptr(), name_bytes.len() as i32);
-    eprintln!("[test-listener] Registered steam_id={} as '{}'", sid, name);
+    // player_1 gets an explicit token; others register token-less (open auth)
+    let token: Option<String> = if n == 1 {
+        Some(format!("vac-test-token-{}", sid))
+    } else {
+        None
+    };
+    let tok_bytes = token.as_ref().map(|t| t.as_bytes());
+    vac_integrity::vac_server_register_client(
+        lo, hi,
+        name_bytes.as_ptr(), name_bytes.len() as i32,
+        tok_bytes.map(|b| b.as_ptr()).unwrap_or(std::ptr::null()),
+        tok_bytes.map(|b| b.len() as i32).unwrap_or(0),
+    );
+    match token {
+        Some(t) => eprintln!("[test-listener] Registered steam_id={} as '{}' (token={})", sid, name, t),
+        None => eprintln!("[test-listener] Registered steam_id={} as '{}'", sid, name),
+    }
+
+    // player_2 mirrors the Carbon plugin flow: register name-only, then
+    // ensure-enroll (generates + persists a stable per-player token).
+    if n == 2 {
+        let mut buf = [0u8; 128];
+        let len = vac_integrity::vac_server_ensure_client_token(lo, hi, buf.as_mut_ptr(), buf.len() as i32);
+        if len > 0 {
+            let t = String::from_utf8_lossy(&buf[..len as usize]).to_string();
+            eprintln!("[test-listener] Enrolled steam_id={} (token={} — mirrors plugin chat delivery)", sid, t);
+        } else {
+            eprintln!("[test-listener] Enrollment failed for steam_id={}", sid);
+        }
+    }
 }
 
 fn main() {
