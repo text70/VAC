@@ -124,6 +124,9 @@ if [ -z "$VAC_WORLDSIZE" ]; then
 fi
 
 # 7. Deploy with podman-compose (add kmod override only if the module loaded)
+#    BUILDAH_FORMAT=docker silences the harmless "SHELL is not supported for
+#    OCI image format" warning during the build (see AGENTS.md).
+export BUILDAH_FORMAT=docker
 echo "--- Deploying containers ---"
 cd "$ROOT_DIR/docker"
 if [ "$KMOD_OK" -eq 1 ]; then

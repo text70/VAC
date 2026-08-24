@@ -58,7 +58,7 @@ RUN rm -rf /root/.local/share/Steam/steamcmd/linux32 /root/Steam/logs
 # Install Carbon mod
 ENV CARBON_VERSION=production_build
 RUN CARBON_URL="https://github.com/CarbonCommunity/Carbon/releases/download/${CARBON_VERSION}/Carbon.Linux.Release.tar.gz" && \
-    wget -qO /tmp/carbon.tar.gz "${CARBON_URL}" && \
+    wget --progress=bar:force --timeout=60 --tries=5 --continue -O /tmp/carbon.tar.gz "${CARBON_URL}" && \
     tar -xzf /tmp/carbon.tar.gz -C ${SERVER_DIR} && \
     rm /tmp/carbon.tar.gz
 
