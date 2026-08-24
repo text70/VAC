@@ -123,6 +123,26 @@ if [ -z "$VAC_WORLDSIZE" ]; then
     export VAC_WORLDSIZE=4500
 fi
 
+# 6b. Public IP advertised to players (chat links, status page).
+#     Containers only see bridge IPs (e.g. 10.89.x.x), which LAN/remote
+#     clients cannot reach — so detect the HOST address clients will use:
+#     the source IP of the default route. Pre-set VAC_PUBLIC_IP in the
+#     environment to override detection.
+if [ -z "$VAC_PUBLIC_IP" ]; then
+    DETECTED_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -n1)
+    if [ -z "$DETECTED_IP" ]; then
+        DETECTED_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+    if [ -n "$DETECTED_IP" ]; then
+        export VAC_PUBLIC_IP="$DETECTED_IP"
+        echo "--- Detected host IP: $VAC_PUBLIC_IP (export VAC_PUBLIC_IP to override) ---"
+    else
+        echo "--- WARNING: could not detect host IP; chat links may show a container address ---"
+    fi
+else
+    echo "--- Using preset VAC_PUBLIC_IP: $VAC_PUBLIC_IP ---"
+fi
+
 # 7. Deploy with podman-compose (add kmod override only if the module loaded)
 #    BUILDAH_FORMAT=docker silences the harmless "SHELL is not supported for
 #    OCI image format" warning during the build (see AGENTS.md).
