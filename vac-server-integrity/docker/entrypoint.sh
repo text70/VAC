@@ -151,4 +151,12 @@ if [ -n "${RCON_PASSWORD}" ]; then
     SERVER_ARGS+=( +rcon.password "${RCON_PASSWORD}" )
 fi
 
+# Optional operator-supplied extra game args, e.g. VAC_EXTRA_ARGS='+server.eac 0'
+# to disable Easy Anti-Cheat on LAN/test servers.
+if [ -n "${VAC_EXTRA_ARGS:-}" ]; then
+    echo "  Extra args: ${VAC_EXTRA_ARGS}"
+    # intentional unquoted expansion: word-splits "+cvar value" pairs
+    SERVER_ARGS+=( ${VAC_EXTRA_ARGS} )
+fi
+
 exec ./RustDedicated "${SERVER_ARGS[@]}"

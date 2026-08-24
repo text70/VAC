@@ -17,6 +17,9 @@ services:
       - VAC_SERVER_PORT=${VAC_SERVER_PORT:-28015}
       - VAC_APP_PORT=${VAC_APP_PORT:-28082}
       - VAC_RCON_PASSWORD=${VAC_RCON_PASSWORD:-}
+      # Optional: disable Easy Anti-Cheat on LAN/test servers, e.g.
+      # VAC_EXTRA_ARGS='+server.eac 0'
+      - VAC_EXTRA_ARGS=${VAC_EXTRA_ARGS:-}
     volumes:
       - rust-server-data:/server/server
       - /etc/vac/keys:/server/vac-extra:ro
