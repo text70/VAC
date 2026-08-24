@@ -143,11 +143,11 @@ namespace Carbon.Plugins
             );
             if (result != 0)
             {
-                Logger.Warn("VacIntegrity: vac_init failed with code " + result);
+                PrintWarning("VacIntegrity: vac_init failed with code " + result);
                 return;
             }
 
-            Logger.Log("VacIntegrity: initialized");
+            Puts("VacIntegrity: initialized");
 
             _cheatCallback = new CheatDetectedCallback(OnCheatDetected);
             IntPtr cbPtr = Marshal.GetFunctionPointerForDelegate(_cheatCallback);
@@ -156,11 +156,11 @@ namespace Carbon.Plugins
             int listenerResult = vac_server_listener_start(28084);
             if (listenerResult != 0)
             {
-                Logger.Warn("VacIntegrity: listener start failed with code " + listenerResult);
+                PrintWarning("VacIntegrity: listener start failed with code " + listenerResult);
             }
             else
             {
-                Logger.Log("VacIntegrity: daemon listener on port 28084");
+                Puts("VacIntegrity: daemon listener on port 28084");
             }
 
             // Start HTTP download server for the Windows client installer
@@ -192,7 +192,7 @@ namespace Carbon.Plugins
 
                 if (!File.Exists(installerPath))
                 {
-                    Logger.Log("VacIntegrity: no vac-setup.exe found at " + installerPath +
+                    Puts("VacIntegrity: no vac-setup.exe found at " + installerPath +
                         "; HTTP download server will serve 404");
                 }
 
@@ -201,7 +201,7 @@ namespace Carbon.Plugins
                     var listener = new TcpListener(IPAddress.Any, DownloadPort);
                     _httpListener = listener;
                     listener.Start();
-                    Logger.Log("VacIntegrity: download server on port " + DownloadPort);
+                    Puts("VacIntegrity: download server on port " + DownloadPort);
 
                     while (_httpServerRunning)
                     {
@@ -240,7 +240,7 @@ namespace Carbon.Plugins
                 }
                 catch (Exception e)
                 {
-                    Logger.Warn("VacIntegrity: HTTP server error: " + e.Message);
+                    PrintWarning("VacIntegrity: HTTP server error: " + e.Message);
                 }
             })
             { IsBackground = true };
@@ -327,7 +327,7 @@ namespace Carbon.Plugins
             }
             catch (Exception e)
             {
-                Logger.Warn("VacIntegrity: HTTP client error: " + e.Message);
+                PrintWarning("VacIntegrity: HTTP client error: " + e.Message);
             }
         }
 
@@ -774,7 +774,7 @@ namespace Carbon.Plugins
                         string serverIp = GetServerIp();
                         string url = $"http://{serverIp}:{DownloadPort}/";
                         player.Kick("VAC client required. Download and install from: " + url);
-                        Logger.Log("VacIntegrity: Kicked " + player.displayName +
+                        Puts("VacIntegrity: Kicked " + player.displayName +
                             " (no daemon after " + GraceSeconds + "s)");
                     }
                 }
@@ -783,6 +783,16 @@ namespace Carbon.Plugins
 
         private string GetServerIp()
         {
+            // Explicit override wins — inside containers, interface enumeration
+            // returns the bridge IP which LAN clients cannot reach.
+            try
+            {
+                string publicIp = Environment.GetEnvironmentVariable("VAC_PUBLIC_IP");
+                if (!string.IsNullOrEmpty(publicIp))
+                    return publicIp;
+            }
+            catch { }
+
             try
             {
                 string host = ConVar.Server.ip;
@@ -845,7 +855,7 @@ namespace Carbon.Plugins
 
         private void OnPlayerConnected(BasePlayer player)
         {
-            Logger.Log("VacIntegrity: player " + player.displayName +
+            Puts("VacIntegrity: player " + player.displayName +
                 " connected (steamid=" + player.UserIDString + ")");
 
             ulong steamId = player.userID;
@@ -860,7 +870,7 @@ namespace Carbon.Plugins
             string token = EnsureToken(lo, hi);
             if (token == null)
             {
-                Logger.Warn("VacIntegrity: failed to ensure token for " + steamId);
+                PrintWarning("VacIntegrity: failed to ensure token for " + steamId);
                 return;
             }
 
@@ -920,7 +930,7 @@ namespace Carbon.Plugins
             _mldsa65Sk = File.ReadAllBytes(Path.Combine(nativeDir, "mldsa65_secret.der"));
             _mldsa65Pk = File.ReadAllBytes(Path.Combine(nativeDir, "mldsa65_public.der"));
 
-            Logger.Log("VacIntegrity: loaded key material from " + nativeDir);
+            Puts("VacIntegrity: loaded key material from " + nativeDir);
         }
 
         // -----------------------------------------------------------------------
@@ -935,11 +945,11 @@ namespace Carbon.Plugins
             int result = vac_scan(moduleId, buffer, ref len);
             if (result != 0)
             {
-                Logger.Warn("VacIntegrity: module " + moduleId + " scan failed with code " + result);
+                PrintWarning("VacIntegrity: module " + moduleId + " scan failed with code " + result);
                 return;
             }
 
-            Logger.Log("VacIntegrity: module " + moduleId + " scan complete (" + len + " bytes sealed)");
+            Puts("VacIntegrity: module " + moduleId + " scan complete (" + len + " bytes sealed)");
 
             byte[] sealedData = new byte[len];
             Array.Copy(buffer, sealedData, len);
@@ -965,17 +975,17 @@ namespace Carbon.Plugins
 
             if (status == 1)
             {
-                Logger.Warn("VacIntegrity: module " + moduleId + " scan result has INVALID SIGNATURE");
+                PrintWarning("VacIntegrity: module " + moduleId + " scan result has INVALID SIGNATURE");
                 return;
             }
             if (status == 2)
             {
-                Logger.Warn("VacIntegrity: module " + moduleId + " scan result DECRYPTION FAILED");
+                PrintWarning("VacIntegrity: module " + moduleId + " scan result DECRYPTION FAILED");
                 return;
             }
             if (status < 0)
             {
-                Logger.Warn("VacIntegrity: module " + moduleId + " vac_decrypt error code " + status);
+                PrintWarning("VacIntegrity: module " + moduleId + " vac_decrypt error code " + status);
                 return;
             }
 
@@ -1014,7 +1024,7 @@ namespace Carbon.Plugins
 
             if (flagged)
             {
-                Logger.Warn("VacIntegrity: MODULE " + moduleId + " FLAGGED: " + reason);
+                PrintWarning("VacIntegrity: MODULE " + moduleId + " FLAGGED: " + reason);
             }
         }
 
@@ -1036,7 +1046,7 @@ namespace Carbon.Plugins
 
             vac_server_listener_stop();
             vac_shutdown();
-            Logger.Log("VacIntegrity: shutdown complete");
+            Puts("VacIntegrity: shutdown complete");
         }
     }
 }

@@ -94,7 +94,13 @@ if [ "${WORLDSIZE}" -ge 4000 ] && [ "${MEM_KB}" -gt 0 ] && [ "${MEM_KB}" -lt 350
     echo "           this machine reports ${MEM_KB} kB. Consider VAC_WORLDSIZE=1000."
 fi
 
-JOIN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+# Advertise the IP players should use. Prefer an explicit override — inside
+# containers hostname -I returns the bridge IP (e.g. 10.89.x.x), which LAN
+# clients cannot reach.
+JOIN_IP="${VAC_PUBLIC_IP:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
+if [ -n "${VAC_PUBLIC_IP}" ]; then
+    echo "  Public IP: ${VAC_PUBLIC_IP} (from VAC_PUBLIC_IP)"
+fi
 if [ -n "${JOIN_IP}" ]; then
     echo "  Players join via: ${JOIN_IP}:${SERVER_PORT}"
     echo "  VAC status page:  http://${JOIN_IP}:28085/vac/status.html"

@@ -20,6 +20,9 @@ services:
       # Optional: disable Easy Anti-Cheat on LAN/test servers, e.g.
       # VAC_EXTRA_ARGS='+server.eac 0'
       - VAC_EXTRA_ARGS=${VAC_EXTRA_ARGS:-}
+      # Advertised IP for join/status URLs (set to the host's LAN IP when
+      # running in a container, e.g. VAC_PUBLIC_IP=10.0.0.6)
+      - VAC_PUBLIC_IP=${VAC_PUBLIC_IP:-}
     volumes:
       - rust-server-data:/server/server
       - /etc/vac/keys:/server/vac-extra:ro
