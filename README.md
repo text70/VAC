@@ -81,35 +81,60 @@ VAC files placed in the volume before/after first boot:
 | `carbon/native/libvac_integrity.so` | native runtime |
 | `carbon/native/*.der` | PQC keys: `kyber_public/secret`, `mldsa65_public/secret` |
 
-## Connect from the client
+## Clients
 
-Launch the game (launch options `-noeac` for Linux/Proton), then in the F1
-console:
+Rust normally demands Easy Anti-Cheat; this server runs **EAC-off**, so the
+client must ALSO start without EAC (the `-noeac` launch option). Details
+below for the two supported setups.
 
-```
-connect <SERVER_IP>:28015
-```
+### Windows
 
-> **Client tip — RAM:** Rust uses ~8–9.5GB RAM during world startup. Close
-> browsers / VPN apps before joining, or you'll be OOM-killed at spawn.
+1. In Steam, right-click **Rust → Properties → General → Launch Options**
+2. Add the option exactly:
+   ```
+   -noeac
+   ```
+3. Close Properties; launch Rust from Steam via the **Play** button
+   (launch options are only applied when launched through Steam, not by
+   double-clicking `RustClient.exe`).
 
-## Admin panel & auth
+### Linux / Proton
 
-- In-game, open the Carbon admin panel by typing **`cpanel`** (without the
-  leading `/`) in chat.
-- The setup operator is automatically registered as admin/moderator via the
-  deploy script.
+1. Same as Windows: Steam → Rust → Properties → General → Launch Options →
+   `-noeac`, then launch through the **Play** button (Proton passes the flag
+   to `RustClient.exe`).
+2. **Free up RAM first** — Rust uses ~8–9.5GB during world startup. Close
+   browsers / VPN apps on the client, or you'll be OOM-killed at spawn.
 
-## VAC daemon (the anti-cheat client)
+### Connecting in-game
 
-Once in game, the plugin registers you, generates your access code and shows it
-in chat. Then run the daemon on your PC:
+1. Start the game and reach the main menu.
+2. Press **F1** to open the in-game console.
+3. Type, substituting your server IP, and press Enter:
+   ```
+   connect <SERVER_IP>:28015
+   ```
+4. You should load into the world. In the private chat you'll receive a
+   **VAC access code** (and a download link for the Windows client).
+
+> The same server works for vanilla / EAC-enabled Windows clients too, but on
+> this EAC-off server the `-noeac` client is the intended pairing.
+
+### VAC daemon (the anti-cheat client component)
+
+After you're in-game and have your access code, run the daemon on your PC.
+The daemon binary is `vac-daemon`, built from this repo (path it as your
+build output) — e.g.:
 
 ```bash
-vac-daemon <SERVER_IP>:28084 <steamid64> <code-from-chat>
+./vac-daemon <SERVER_IP>:28084 <steamid64> <code-from-chat>
 ```
 
-Status page: `http://<SERVER_IP>:28085/vac/status`
+- `<SERVER_IP>` — the server's IP (`28084` = daemon listener)
+- `<steamid64>` — your SteamID64
+- `<code-from-chat>` — the access code the plugin gave you in game
+
+You can watch live status at: `http://<SERVER_IP>:28085/vac/status`
 
 ## Verify healthy
 
@@ -151,4 +176,11 @@ podman rm -f rust-server && <re-run script>    # rebuild; /opt/vac-rustdata pers
   false positive from an unbooted/uncompiled container state.
 - See [`vac-server-integrity/docs/lan-linux-eac-findings.md`](vac-server-integrity/docs/lan-linux-eac-findings.md) for
   the full technical history of the EAC/LAN work.
+
+## Admin panel & auth
+
+- In-game, open the Carbon admin panel by typing **`cpanel`** (without the
+  leading `/`) in chat.
+- The setup operator is automatically registered as admin/moderator via the
+  deploy script.
 </content>
