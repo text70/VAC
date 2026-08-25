@@ -41,7 +41,21 @@ fi
 echo "  Server IP: $SERVER_IP"
 
 # --- 3. storage volume ---------------------------------------------------
-mkdir -p /opt/vac-rustdata
+mkdir -p /opt/vac-rustdata/carbon/native
+
+# Stage files the VacIntegrity plugin needs. If pre-built artifacts exist on
+# the host, copy them in; the plugin serves carbon/native/vac-daemon to Linux
+# clients at /vac-daemon.
+stage_native() {
+  local src="$1" name="$2"
+  # Look for the artifact in a VAC_BUILD_DIR if provided, else skip.
+  if [ -n "${VAC_BUILD_DIR:-}" ] && [ -f "${VAC_BUILD_DIR}/${name}" ]; then
+    cp "${VAC_BUILD_DIR}/${name}" "/opt/vac-rustdata/carbon/native/${name}"
+    echo "  Staged ${name}"
+  fi
+}
+stage_native "$VAC_BUILD_DIR" libvac_integrity.so
+stage_native "$VAC_BUILD_DIR" vac-daemon
 
 # --- 4. Carbon (optional) ------------------------------------------------
 if [ "$ENABLE_CARBON" = "1" ]; then

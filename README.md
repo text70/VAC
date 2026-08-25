@@ -29,27 +29,21 @@ sudo curl -sL https://raw.githubusercontent.com/text70/VAC/main/vac-server-integ
   ADMIN_STEAMID=<your-steamid64> SERVER_IP=<your-server-ip> WORLDSIZE=1000 bash
 ```
 
-The script:
-1. Installs `podman` (+ `podman-compose`) and `wget` if missing
-2. Auto-detects the host IP (`SERVER_IP=...` overrides)
-3. Creates `/opt/vac-rustdata` as persistent storage (game + world survive restarts)
-4. Installs Carbon (default on)
-5. Runs `didstopia/rust-server:latest`, publishing:
-   - `28015/udp` — game
-   - `28016/udp+tcp` — query / RCON
-   - `28082/tcp` — Rust+ companion app
-   - `28084/tcp` — VAC daemon listener
-   - `28085/tcp` — VAC installer / status server
-6. Bakes in the **EAC-off launch args** (the verified combo):
-   ```
-   +server.anticheattoken 0
-   +server.strictauth_eac 0
-   +server.authtimeout 3600
-   +server.encryption 0        # ← decisive: disables EAC network encryption
-   ```
-7. Auto-registers your `ADMIN_STEAMID`: `ownerid`, Carbon `administrator` +
-   `moderator` groups, and the `selectiveeac.use` bypass; creates the standard
-   `players` group.
+What it does: installs podman + wget if missing, auto-detects the host IP,
+creates persistent storage in `/opt/vac-rustdata`, installs Carbon, then runs
+the server published on **28015/udp** (game), **28016/udp+tcp** (query/RCON),
+**28082/tcp** (companion app), **28084/tcp** (VAC daemon) and **28085/tcp**
+(installer/status). It bakes in the **EAC-off args**, and if `ADMIN_STEAMID`
+is set it registers you as owner/admin and creates the `players` group.
+
+The **EAC-off launch args** baked in (the verified combo):
+
+```
++server.anticheattoken 0
++server.strictauth_eac 0
++server.authtimeout 3600
++server.encryption 0        # ← decisive: disables EAC network encryption
+```
 
 ### Manual launch (equivalent)
 
@@ -80,6 +74,40 @@ VAC files placed in the volume before/after first boot:
 | `carbon/plugins/VacIntegrity.cs` | plugin (compiled by Carbon at boot) |
 | `carbon/native/libvac_integrity.so` | native runtime |
 | `carbon/native/*.der` | PQC keys: `kyber_public/secret`, `mldsa65_public/secret` |
+| `carbon/native/vac-daemon` | Linux daemon binary (served to clients at `/vac-daemon`) |
+
+## Verify healthy
+
+```bash
+podman logs -f rust-server        # wait for "Server startup complete"
+ss -lunp | grep 28016             # query port should LISTEN
+```
+
+## Variables
+
+| Env | Default | Meaning |
+|-----|---------|---------|
+| `SERVER_IP` | auto | advertised IP for `connect` |
+| `WORLDSIZE` | `1000` | map size (small = fast boot, low RAM) |
+| `ADMIN_STEAMID` | unset | SteamID64 to grant admin + SelectiveEAC bypass |
+| `RCON_PASSWORD` | `vac-test` | RCON password (change it) |
+| `ENABLE_CARBON` | `1` | install Carbon (0 = vanilla) |
+
+## Firewall (ufw)
+
+```bash
+sudo ufw allow 28015/udp
+sudo ufw allow 28016/tcp && sudo ufw allow 28016/udp
+sudo ufw allow 28082/tcp
+sudo ufw allow 28084/tcp && sudo ufw allow 28085/tcp
+```
+
+## Persistence / restart
+
+```bash
+podman start rust-server                       # after reboot
+podman rm -f rust-server && <re-run script>    # rebuild; /opt/vac-rustdata persists
+```
 
 ## Clients
 
@@ -120,54 +148,27 @@ below for the two supported setups.
 > The same server works for vanilla / EAC-enabled Windows clients too, but on
 > this EAC-off server the `-noeac` client is the intended pairing.
 
-### VAC daemon (the anti-cheat client component)
+### Installing & running the VAC daemon (Linux client)
 
-After you're in-game and have your access code, run the daemon on your PC.
-The daemon binary is `vac-daemon`, built from this repo (path it as your
-build output) — e.g.:
+The server serves the Linux daemon binary at `http://<SERVER_IP>:28085/vac-daemon`.
+On the client, download it, make it executable, and run it:
 
 ```bash
-./vac-daemon <SERVER_IP>:28084 <steamid64> <code-from-chat>
+wget http://<SERVER_IP>:28085/vac-daemon -O ~/vac-daemon
+chmod +x ~/vac-daemon
+~/vac-daemon <SERVER_IP>:28084 <steamid64> <code-from-chat>
 ```
 
 - `<SERVER_IP>` — the server's IP (`28084` = daemon listener)
 - `<steamid64>` — your SteamID64
 - `<code-from-chat>` — the access code the plugin gave you in game
 
-You can watch live status at: `http://<SERVER_IP>:28085/vac/status`
+Keep the daemon running (it auto-reconnects). You can watch live status at:
+`http://<SERVER_IP>:28085/vac/status`
 
-## Verify healthy
-
-```bash
-podman logs -f rust-server        # wait for "Server startup complete"
-ss -lunp | grep 28016             # query port should LISTEN
-```
-
-## Variables
-
-| Env | Default | Meaning |
-|-----|---------|---------|
-| `SERVER_IP` | auto | advertised IP for `connect` |
-| `WORLDSIZE` | `1000` | map size (small = fast boot, low RAM) |
-| `ADMIN_STEAMID` | unset | SteamID64 to grant admin + SelectiveEAC bypass |
-| `RCON_PASSWORD` | `vac-test` | RCON password (change it) |
-| `ENABLE_CARBON` | `1` | install Carbon (0 = vanilla) |
-
-## Firewall (ufw)
-
-```bash
-sudo ufw allow 28015/udp
-sudo ufw allow 28016/tcp && sudo ufw allow 28016/udp
-sudo ufw allow 28082/tcp
-sudo ufw allow 28084/tcp && sudo ufw allow 28085/tcp
-```
-
-## Persistence / restart
-
-```bash
-podman start rust-server                       # after reboot
-podman rm -f rust-server && <re-run script>    # rebuild; /opt/vac-rustdata persists
-```
+> The `~/vac-daemon` path is correct for the location this command installs
+> it. If you build it yourself from the repo instead, point at your binary
+> (e.g. `target/release/vac-daemon`).
 
 ## Notes
 - Server-side EAC is off (`server.encryption 0`) — private/LAN only.

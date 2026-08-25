@@ -296,6 +296,10 @@ namespace Carbon.Plugins
                             ServeInstaller(stream);
                             return;
 
+                        case "/vac-daemon":
+                            ServeLinuxDaemon(stream);
+                            return;
+
                         case "/setup":
                         case "/vac-setup.zip":
                             ServeSetupBundle(stream, query, hostHeader);
@@ -452,6 +456,42 @@ namespace Carbon.Plugins
             stream.Write(headerBytes, 0, headerBytes.Length);
 
             using (var fs = new FileStream(installerPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                var buffer = new byte[HttpStreamBuffer];
+                int read;
+                while (_httpServerRunning && (read = fs.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    stream.Write(buffer, 0, read);
+                }
+            }
+        }
+
+        /// GET /vac-daemon — Linux client daemon binary (built from this repo,
+        /// staged as carbon/native/vac-daemon). Lets Linux clients fetch the
+        /// daemon straight from the server.
+        private void ServeLinuxDaemon(NetworkStream stream)
+        {
+            string daemonPath = Path.Combine(
+                Environment.CurrentDirectory, "carbon", "native", "vac-daemon");
+
+            var info = new FileInfo(daemonPath);
+            if (!File.Exists(daemonPath) || info.Length <= 0 || info.Length > HttpMaxBodyBytes)
+            {
+                WriteResponse(stream, 404, "text/html; charset=utf-8",
+                    "<html><body><h2>404 vac-daemon not available</h2></body></html>");
+                return;
+            }
+
+            string header = "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: application/octet-stream\r\n" +
+                "Content-Disposition: attachment; filename=vac-daemon\r\n" +
+                "Content-Length: " + info.Length + "\r\n" +
+                "Cache-Control: no-store\r\n" +
+                "Connection: close\r\n\r\n";
+            byte[] headerBytes = Encoding.ASCII.GetBytes(header);
+            stream.Write(headerBytes, 0, headerBytes.Length);
+
+            using (var fs = new FileStream(daemonPath, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
                 var buffer = new byte[HttpStreamBuffer];
                 int read;
