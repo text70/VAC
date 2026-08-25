@@ -157,8 +157,10 @@ if [ -n "${RCON_PASSWORD}" ]; then
     SERVER_ARGS+=( +rcon.password "${RCON_PASSWORD}" )
 fi
 
-# Optional operator-supplied extra game args, e.g. VAC_EXTRA_ARGS='+server.eac 0'
-# to disable Easy Anti-Cheat on LAN/test servers.
+# Optional operator-supplied extra game args, e.g. to disable the EAC
+# connection handshake on LAN/test servers:
+#   VAC_EXTRA_ARGS='+server.encryption 0 +server.anticheattoken 0 +server.strictauth_eac 0'
+# (server.encryption 2->0 is the decisive lever for EAC-less/Linux clients).
 if [ -n "${VAC_EXTRA_ARGS:-}" ]; then
     echo "  Extra args: ${VAC_EXTRA_ARGS}"
     # intentional unquoted expansion: word-splits "+cvar value" pairs
