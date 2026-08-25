@@ -1,17 +1,19 @@
-# VAC Integrity — Rust Server with VacIntegrity Anti-Cheat (Docker/Podman)
+# VAC Integrity — Rust Server with VacIntegrity Anti-Cheat 
 
-A **working** RustDedicated + **Carbon** server with the **VAC Integrity**
+The Rust server that everyone wanted all along. 
+
+RustDedicated + **Carbon** server with the **VAC Integrity**
 anti-cheat stack layered in, deployable on your own machine (LAN or private
-server). Server-side EAC handling is neutralised so even a **Linux/Proton
-client can actually join** (reaches world spawn).
+server). 
 
-This is the configuration verified live end-to-end:
-
+**Requirements**
 - **Host**: Debian/Ubuntu, Podman
-- **Base image**: `didstopia/rust-server` (boots reliably)
-- **Mod framework**: Carbon (supports runtime `.cs` plugins such as VacIntegrity)
-- **Anti-cheat**: VacIntegrity plugin — `libvac_integrity.so` + PQC keys
-- **Client**: Windows or Linux/Proton (launch with `-noeac`)
+
+**What it provides**
+- **Base image**: `didstopia/rust-server` (this is bundled in the podman/docker image)
+- **Mod framework**: Carbon (supports runtime `.cs` plugins such as VacIntegrity) (also in the image)
+- **Anti-cheat**: VacIntegrity plugin — `libvac_integrity.so` + PQC keys 
+- **Client Daemon**: Windows or Linux/Proton auto-detected on join 
 
 > If you're looking for the original Valve Anti-Cheat *reverse-engineering*
 > research, see [`docs/original-vac-re.md`](docs/original-vac-re.md).
@@ -175,9 +177,9 @@ podman rm -f rust-server && <re-run script>    # rebuild; /opt/vac-rustdata pers
 
 ## Clients
 
-Rust normally demands Easy Anti-Cheat; this server runs **EAC-off**, so the
-client must ALSO start without EAC (the `-noeac` launch option). Details
-below for the two supported setups.
+All clients should first install the RustClient.exe to Steam as a non-steam game. 
+
+Games -> Add a Non-Steam Game to My Library -> Browse -> <path-to-your>SteamLibrary/steamapps/common/Rust/RustClient.exe
 
 ### Windows
 
@@ -195,10 +197,9 @@ below for the two supported setups.
 1. Same as Windows: Steam → Rust → Properties → General → Launch Options →
    `-noeac`, then launch through the **Play** button (Proton passes the flag
    to `RustClient.exe`).
-2. **Free up RAM first** — Rust uses ~8–9.5GB during world startup. Close
-   browsers / VPN apps on the client, or you'll be OOM-killed at spawn.
 
 ### Connecting in-game
+
 
 1. Start the game and reach the main menu.
 2. Press **F1** to open the in-game console.
@@ -211,6 +212,9 @@ below for the two supported setups.
 
 > The same server works for vanilla / EAC-enabled Windows clients too, but on
 > this EAC-off server the `-noeac` client is the intended pairing.
+
+If you can't get the daemon in next part running in 60 seconds the sever will kick you. 
+Go back to step 2. and rejoin the server. 
 
 ### Installing & running the VAC daemon (Linux client)
 
@@ -229,12 +233,17 @@ chmod +x ~/vac-daemon
 - `<steamid64>` — your SteamID64
 - `<code-from-chat>` — the access code the plugin gave you in game
 
+On launch if the game is not connected, you will get a reject message, once connected this
+message should go change.  
+
 Keep the daemon running (it auto-reconnects). You can watch live status at:
 `http://<SERVER_IP>:28085/vac/status`
 
 > The `~/vac-daemon` path is correct for the location this command installs
 > it. If you build it yourself from the repo instead, point at your binary
 > (e.g. `target/release/vac-daemon`).
+
+
 
 ## Notes
 - Server-side EAC is off (`server.encryption 0`) — private/LAN only.
