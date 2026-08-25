@@ -70,6 +70,10 @@ fi
 
 # --- 5. extra game args: EAC fully off --------------------------------
 EXTRA_ARGS="+server.anticheattoken 0 +server.strictauth_eac 0 +server.authtimeout 3600 +server.encryption 0"
+if [ -n "${VAC_EXTRA_ARGS:-}" ]; then
+  EXTRA_ARGS="$EXTRA_ARGS $VAC_EXTRA_ARGS"
+  echo "  Extra args: $VAC_EXTRA_ARGS"
+fi
 
 # --- 6. run -------------------------------------------------------------
 podman rm -f rust-server 2>/dev/null || true

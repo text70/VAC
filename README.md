@@ -83,6 +83,70 @@ podman logs -f rust-server        # wait for "Server startup complete"
 ss -lunp | grep 28016             # query port should LISTEN
 ```
 
+## Cloud deployment
+
+The same deploy script runs on any Debian/Ubuntu cloud VM (Hetzner, DigitalOcean,
+AWS, etc.). Two things differ from a home-LAN setup:
+
+1. **Advertise the public IP** — the plugin builds in-game links / client
+   packages from `VAC_PUBLIC_IP`. Inside a container that would otherwise
+   fall back to the podman bridge IP (unreachable to players), so set it
+   explicitly to the VM's public IP.
+2. **Open the ports in the cloud firewall / security group** (see Firewall).
+
+A typical cloud launch:
+
+```bash
+# Auto-IP only works for the host's own address; for cloud, always pass
+# SERVER_IP (your VM's public IP) so everything downstream advertises it.
+sudo curl -sL https://raw.githubusercontent.com/text70/VAC/main/vac-server-integrity/deploy/deploy-didstopia.sh | \
+  SERVER_IP=<your-cloud-public-ip> \
+  ADMIN_STEAMID=<your-steamid64> \
+  RCON_PASSWORD='<strong-password>' \
+  bash
+```
+
+> The deploy script passes `SERVER_IP` through as `VAC_PUBLIC_IP` into the
+> container, so the in-game message, `/setup` link and `/vac/status` all use
+> the reachable public address instead of the podman bridge IP.
+
+### Setting environment variables
+
+All runtime settings are environment variables on the deploy command line (or
+exported before running the script). The server-side ones used by the plugin
+and game:
+
+| Env | Default | Purpose |
+|-----|---------|---------|
+| `SERVER_IP` | auto | public/cloud IP advertised to players (`VAC_PUBLIC_IP`) |
+| `VAC_PUBLIC_IP` | set from `SERVER_IP` | IP the plugin bakes into chat links, client packages, status |
+| `WORLDSIZE` | `1000` | map size; small = fast boot, low RAM |
+| `VAC_MAXPLAYERS` | via image | max players |
+| `ADMIN_STEAMID` | unset | operator SteamID64 → owner/admin + SelectiveEAC bypass |
+| `RCON_PASSWORD` | `vac-test` | **change for cloud** (exposed on 28016) |
+| `ENABLE_CARBON` | `1` | install Carbon (0 = vanilla) |
+| `VAC_BUILD_DIR` | unset | host dir with prebuilt `libvac_integrity.so` + `vac-daemon` to stage |
+| `VAC_EXTRA_ARGS` | unset | extra `+cvar value ...` game args appended at launch |
+
+Those reach the server process as-is via `podman run -e ...`; the deploy script
+maps `SERVER_IP`→`VAC_PUBLIC_IP`, and `VAC_EXTRA_ARGS` is appended to the
+server argv. For example, to advertise a public IP and set a strong RCON
+password and a larger world:
+
+```bash
+export SERVER_IP=203.0.113.10
+export ADMIN_STEAMID=76561198080464013
+export RCON_PASSWORD="s3cret-Rcon!"
+export WORLDSIZE=3000
+curl -sL https://raw.githubusercontent.com/text70/VAC/main/vac-server-integrity/deploy/deploy-didstopia.sh | sudo bash
+```
+
+> Note: `VAC_PUBLIC_IP` is the only one the plugin reads directly; the rest
+> (`WORLDSIZE`, `RCON`, etc.) configure the game via the image entrypoint /
+> startup args. If you skip `SERVER_IP` on a cloud VM, the auto-detected IP
+> will be the interface's private address — always set it to the **public**
+> IP on cloud hosts.
+
 ## Variables
 
 | Env | Default | Meaning |
