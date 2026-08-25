@@ -79,6 +79,7 @@ podman run -d --name rust-server \
   -e RUST_SERVER_QUERYPORT=28016 \
   -e RUST_SERVER_STARTUP_ARGUMENTS="-batchmode -load -nographics $EXTRA_ARGS" \
   -e RUST_RCON_PASSWORD="$RCON_PASSWORD" \
+  -e VAC_PUBLIC_IP="$SERVER_IP" \
   -v /opt/vac-rustdata:/steamcmd/rust \
   -p 28015:28015/udp -p 28016:28016/udp -p 28082:28082/tcp \
   didstopia/rust-server:latest
