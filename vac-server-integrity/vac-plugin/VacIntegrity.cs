@@ -831,7 +831,11 @@ namespace Carbon.Plugins
 
         private void CheckDaemonEnforcement()
         {
-            foreach (var kvp in _playerConnectTime)
+            // Iterate a snapshot so OnPlayerDisconnected (which removes from
+            // _playerConnectTime) can't mutate the collection mid-enumeration
+            // and kill the 5s timer.
+            var players = new List<KeyValuePair<ulong, DateTime>>(_playerConnectTime);
+            foreach (var kvp in players)
             {
                 ulong steamId = kvp.Key;
                 DateTime connectedAt = kvp.Value;
