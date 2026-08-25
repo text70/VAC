@@ -143,6 +143,28 @@ else
     echo "--- Using preset VAC_PUBLIC_IP: $VAC_PUBLIC_IP ---"
 fi
 
+# 6c. Persist deployment settings to docker/.env.
+#     Shell exports die between sessions (the #1 cause of "my env didn't
+#     apply" reports) — a project .env file survives and is auto-loaded by
+#     podman-compose/docker-compose on every future `up`, including manual
+#     ones. Existing .env values the operator wrote are preserved unless
+#     this deploy explicitly computed a new one.
+ENV_FILE="$ROOT_DIR/docker/.env"
+touch "$ENV_FILE"
+persist_env() {  # persist_env KEY VALUE — set key, preserving other lines
+    local key="$1" val="$2"
+    if grep -qE "^${key}=" "$ENV_FILE"; then
+        sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE"
+    else
+        echo "${key}=${val}" >> "$ENV_FILE"
+    fi
+}
+[ -n "$VAC_WORLDSIZE" ] && persist_env VAC_WORLDSIZE "$VAC_WORLDSIZE"
+[ -n "$VAC_PUBLIC_IP" ] && persist_env VAC_PUBLIC_IP "$VAC_PUBLIC_IP"
+[ -n "$VAC_EXTRA_ARGS" ] && persist_env VAC_EXTRA_ARGS "$VAC_EXTRA_ARGS"
+echo "--- Deployment settings written to ${ENV_FILE}: ---"
+cat "$ENV_FILE"
+
 # 7. Deploy with podman-compose (add kmod override only if the module loaded)
 #    BUILDAH_FORMAT=docker silences the harmless "SHELL is not supported for
 #    OCI image format" warning during the build (see AGENTS.md).
