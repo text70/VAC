@@ -150,8 +150,10 @@ below for the two supported setups.
 
 ### Installing & running the VAC daemon (Linux client)
 
-The server serves the Linux daemon binary at `http://<SERVER_IP>:28085/vac-daemon`.
-On the client, download it, make it executable, and run it:
+The magic launch link auto-detects your OS: a Windows browser gets the
+`vac-setup.zip` installer, a Linux/Proton User-Agent gets
+`vac-linux.zip` (the `vac-daemon` binary + a preload ini with your access
+code). Alternatively download the daemon directly:
 
 ```bash
 wget http://<SERVER_IP>:28085/vac-daemon -O ~/vac-daemon

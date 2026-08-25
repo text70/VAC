@@ -278,8 +278,10 @@ namespace Carbon.Plugins
                     string route = qIdx >= 0 ? rawPath.Substring(0, qIdx) : rawPath;
                     string query = qIdx >= 0 ? rawPath.Substring(qIdx + 1) : "";
 
-                    // Host header (for baking the daemon server address into configs)
+                    // Host + User-Agent headers (Host for baking the daemon
+                    // address; User-Agent to serve the right client binary).
                     string hostHeader = ExtractHeader(request, "Host:");
+                    string userAgent = ExtractHeader(request, "User-Agent:");
 
                     switch (route.ToLowerInvariant())
                     {
@@ -302,7 +304,7 @@ namespace Carbon.Plugins
 
                         case "/setup":
                         case "/vac-setup.zip":
-                            ServeSetupBundle(stream, query, hostHeader);
+                            ServeSetupBundle(stream, query, hostHeader, userAgent);
                             return;
 
                         case "/vac/status":
@@ -373,23 +375,16 @@ namespace Carbon.Plugins
         }
 
         /// GET /setup?t=<token>
-        /// Serves a ZIP containing vac-setup.exe + vac-preload.ini with the
-        /// daemon server address and access code baked in — zero typing.
-        private void ServeSetupBundle(NetworkStream stream, string query, string hostHeader)
+        /// Serves the right client package for the requesting OS:
+        ///  - Windows User-Agent  -> vac-setup.zip (installer + preload ini)
+        ///  - Linux/Proton UA     -> vac-linux.zip (vac-daemon + preload ini)
+        private void ServeSetupBundle(NetworkStream stream, string query, string hostHeader, string userAgent)
         {
             string token = GetQueryParam(query, "t");
             if (!IsValidToken(token))
             {
                 WriteResponse(stream, 400, "text/plain",
                     "Missing or invalid access code. Use the link from the in-game chat message.");
-                return;
-            }
-
-            string installerPath = Path.Combine(
-                Environment.CurrentDirectory, "carbon", "native", "vac-setup.exe");
-            if (!File.Exists(installerPath))
-            {
-                WriteResponse(stream, 404, "text/plain", "Installer not available yet. Try again shortly.");
                 return;
             }
 
@@ -405,32 +400,85 @@ namespace Carbon.Plugins
                 "server=" + daemonHost + ":28084\r\n" +
                 "token=" + token + "\r\n";
 
-            byte[] exeBytes;
-            try
+            byte[] zip;
+            string fileName;
+
+            if (IsLinuxAgent(userAgent))
             {
-                exeBytes = File.ReadAllBytes(installerPath);
+                zip = BuildLinuxZip(preloadIni);
+                fileName = "vac-linux.zip";
             }
-            catch (Exception e)
+            else
             {
-                WriteResponse(stream, 500, "text/plain", "Failed to read installer: " + e.Message);
+                zip = BuildWindowsZip(preloadIni);
+                fileName = "vac-setup.zip";
+            }
+
+            if (zip == null)
+            {
+                WriteResponse(stream, 404, "text/plain",
+                    "Client package not available yet. Try again shortly.");
                 return;
             }
 
-            byte[] zip = ZipBuilder.BuildZip(new[]
-            {
-                new ZipBuilder.Entry { Name = "vac-setup.exe", Data = exeBytes },
-                new ZipBuilder.Entry { Name = "vac-preload.ini", Data = Encoding.ASCII.GetBytes(preloadIni) },
-            });
-
             string header = "HTTP/1.1 200 OK\r\n" +
                 "Content-Type: application/zip\r\n" +
-                "Content-Disposition: attachment; filename=vac-setup.zip\r\n" +
+                "Content-Disposition: attachment; filename=" + fileName + "\r\n" +
                 "Content-Length: " + zip.Length + "\r\n" +
                 "Cache-Control: no-store\r\n" +
                 "Connection: close\r\n\r\n";
             byte[] headerBytes = Encoding.ASCII.GetBytes(header);
             stream.Write(headerBytes, 0, headerBytes.Length);
             stream.Write(zip, 0, zip.Length);
+        }
+
+        /// Rough OS detection from the HTTP User-Agent. Windows returns false;
+        /// Linux/Proton (or any UA with a *nix marker) returns true.
+        private static bool IsLinuxAgent(string userAgent)
+        {
+            if (string.IsNullOrEmpty(userAgent)) return false;
+            string ua = userAgent.ToLowerInvariant();
+            if (ua.Contains("windows") || ua.Contains("win32")) return false;
+            return ua.Contains("linux") || ua.Contains("x11") || ua.Contains("darwin")
+                || ua.Contains("macintosh") || ua.Contains("proton");
+        }
+
+        /// Zip with the Linux daemon binary + preload ini (token/server baked in).
+        private byte[] BuildLinuxZip(string preloadIni)
+        {
+            string daemonPath = Path.Combine(
+                Environment.CurrentDirectory, "carbon", "native", "vac-daemon");
+            if (!File.Exists(daemonPath))
+                return null;
+
+            byte[] daemonBytes;
+            try { daemonBytes = File.ReadAllBytes(daemonPath); }
+            catch { return null; }
+
+            return ZipBuilder.BuildZip(new[]
+            {
+                new ZipBuilder.Entry { Name = "vac-daemon", Data = daemonBytes },
+                new ZipBuilder.Entry { Name = "vac-preload.ini", Data = Encoding.ASCII.GetBytes(preloadIni) },
+            });
+        }
+
+        /// Zip with the Windows installer + preload ini.
+        private byte[] BuildWindowsZip(string preloadIni)
+        {
+            string installerPath = Path.Combine(
+                Environment.CurrentDirectory, "carbon", "native", "vac-setup.exe");
+            if (!File.Exists(installerPath))
+                return null;
+
+            byte[] exeBytes;
+            try { exeBytes = File.ReadAllBytes(installerPath); }
+            catch { return null; }
+
+            return ZipBuilder.BuildZip(new[]
+            {
+                new ZipBuilder.Entry { Name = "vac-setup.exe", Data = exeBytes },
+                new ZipBuilder.Entry { Name = "vac-preload.ini", Data = Encoding.ASCII.GetBytes(preloadIni) },
+            });
         }
 
         private void ServeInstaller(NetworkStream stream)
