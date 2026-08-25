@@ -962,13 +962,15 @@ namespace Carbon.Plugins
                 return;
             }
 
-            // Magic link: serves a ZIP containing the installer + a preload ini
-            // with server address and access code already baked in.
+            // Magic link: serves the OS-appropriate client package (Windows
+            // installer zip, or Linux/Proton daemon zip) + a preload ini with
+            // server address and access code already baked in.
             string serverIp = GetServerIp();
             string url = $"http://{serverIp}:{DownloadPort}/setup?t={token}";
             player.ChatMessage("VAC protection required: download " + url);
-            player.ChatMessage("Extract the ZIP anywhere and run vac-setup.exe - no typing needed.");
-            player.ChatMessage("Your access code (if asked): " + token);
+            player.ChatMessage("Windows: extract and run vac-setup.exe. "
+                + "Linux/Proton: extract vac-linux.zip and run ./vac-daemon (use the access code below).");
+            player.ChatMessage("Your access code: " + token);
 
             _playerConnectTime[steamId] = DateTime.UtcNow;
             lock (_playerNames)
