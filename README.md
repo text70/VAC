@@ -243,9 +243,37 @@ Keep the daemon running in a terminal during gameplay (it auto-reconnects).
 You can check your live status at:
 `http://<SERVER_IP>:28085/vac/status`
 
-> The `~/vac-daemon` path is correct for the location this command installs
-> it. If you build it yourself from the repo instead, point at your binary
-> (e.g. `target/release/vac-daemon`).
+> The command above downloads to your current directory (`vac-daemon`) and runs
+> it with `./vac-daemon`. If you save it elsewhere (e.g. `~/vac-daemon`), run it
+> with that path instead. Prefer the `vac-linux.zip` from your chat link, which
+> bakes in your server address and access code so you don't have to type them.
+
+### Installing & running the VAC daemon (Windows client)
+
+Windows doesn't ship `wget`, so use PowerShell's `Invoke-WebRequest`. The server
+auto-detects your OS and serves the Windows **installer zip** (never the raw
+Linux binary). Either click the chat link, or run:
+
+```powershell
+Invoke-WebRequest "http://<SERVER_IP>:28085/setup?t=<code-from-chat>" -OutFile vac-setup.zip
+```
+
+Then:
+1. Extract `vac-setup.zip` and run `vac-setup.exe`.
+2. The installer pre-fills your server address and access code (from the link's
+   `t=<code>`), so just click through.
+3. Keep the VAC daemon running (it runs as a background service).
+
+If you have `wget` installed (e.g. Git for Windows), this works too:
+```powershell
+wget "http://<SERVER_IP>:28085/setup?t=<code-from-chat>" -o vac-setup.zip
+```
+
+- `<SERVER_IP>` — the server's IP (e.g. `10.0.0.6`)
+- `<code-from-chat>` — the access code the plugin gave you in game
+
+You can check your live status at:
+`http://<SERVER_IP>:28085/vac/status`
 
 
 
