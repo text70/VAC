@@ -218,15 +218,17 @@ Go back to step 2. and rejoin the server.
 
 ### Installing & running the VAC daemon (Linux client)
 
+The vac-daemon binary is downloaded with the encrypted server signature from the Rust server.  
+  
 The magic launch link auto-detects your OS: a Windows browser gets the
 `vac-setup.zip` installer, a Linux/Proton User-Agent gets
 `vac-linux.zip` (the `vac-daemon` binary + a preload ini with your access
-code). Alternatively download the daemon directly:
+code). Alternatively download the daemon directly into the directory of your choice:
 
 ```bash
-wget http://<SERVER_IP>:28085/vac-daemon -O ~/vac-daemon
-chmod +x ~/vac-daemon
-~/vac-daemon <SERVER_IP>:28084 <steamid64> <code-from-chat>
+wget http://<SERVER_IP>:28085/vac-daemon -O vac-daemon
+chmod +x vac-daemon
+./vac-daemon <SERVER_IP>:28084 <steamid64> <code-from-chat>
 ```
 
 - `<SERVER_IP>` — the server's IP (`28084` = daemon listener)
@@ -236,7 +238,9 @@ chmod +x ~/vac-daemon
 On launch if the game is not connected, you will get a reject message, once connected this
 message should go change.  
 
-Keep the daemon running (it auto-reconnects). You can watch live status at:
+Keep the daemon running in a terminal during gameplay (it auto-reconnects).   
+
+You can check your live status at:
 `http://<SERVER_IP>:28085/vac/status`
 
 > The `~/vac-daemon` path is correct for the location this command installs
