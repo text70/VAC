@@ -177,6 +177,13 @@ aws ec2 modify-instance-attribute --instance-id $INSTANCE_ID \
 > `SERVER_IP` if you use an auto-assigned one that changes). Never pass your
 > instance's *private* IP as `SERVER_IP`.
 
+**Sizing (RAM ↔ world size):** an `m5.large`/`c6i.large`/`t3.large` (8GB) or
+larger is recommended for `WORLDSIZE=4500`. A **`t3.medium` (4GB)** will OOM
+on a 1500 map — use `WORLDSIZE=1000` there (the default, ~2GB peak, tested).
+If the server dies right after "Occlusion Grid … Processing … batches" with
+`Exiting..` in the logs, it's the engine being killed for memory — lower
+`WORLDSIZE` (or raise the instance).
+
 ## Firewall (ufw — self-hosted)
 
 Cloud hosts: open the five ports from the Public hosting table in your security
