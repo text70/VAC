@@ -2,6 +2,15 @@
   <img src="docs/logos/vac-wordmark.png" alt="VAC Integrity" width="520">
 </p>
 
+<p align="center">
+  <a href="https://github.com/text70/VAC/actions/workflows/rust-ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/text70/VAC/rust-ci.yml?branch=main&label=CI&logo=github" alt="CI"></a>
+  <img src="https://img.shields.io/github/repo-size/text70/VAC?label=size&logo=github" alt="repo size">
+  <img src="https://img.shields.io/github/license/text70/VAC?color=informational" alt="license">
+  <img src="https://img.shields.io/badge/rust-stable-dea584?logo=rust&logoColor=white" alt="Rust">
+  <img src="https://img.shields.io/badge/platform-linux%20%7C%20windows-blue" alt="platform">
+  <a href="https://docs.carbonmod.gg/"><img src="https://img.shields.io/badge/Carbon-2.0.257-black" alt="Carbon"></a>
+</p>
+
 # VAC Integrity — Rust Server with VacIntegrity Anti-Cheat 
 
 The Rust Linux server for Proton/Linux and Windows clients. 
