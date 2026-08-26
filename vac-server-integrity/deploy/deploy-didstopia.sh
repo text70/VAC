@@ -185,17 +185,31 @@ podman rm -f rust-server 2>/dev/null || true
 # directory; --workdir / avoids depending on the image WORKDIR existing at
 # launch (fixes "[conmon:e] Failed to get working directory").
 mkdir -p /opt/vac-rustdata
+# Export so the inline container command ($EXTRA_ARGS, $WORLDSIZE, $VAC_SEED,
+# $RCON_PASSWORD) resolves them from the environment.
+export EXTRA_ARGS WORLDSIZE VAC_SEED RCON_PASSWORD
 podman run -d --name rust-server --workdir / \
   -e RUST_SERVER_WORLDSIZE="$WORLDSIZE" \
   -e RUST_SERVER_SEED="$VAC_SEED" \
   -e RUST_SERVER_PORT=28015 \
   -e RUST_SERVER_QUERYPORT=28016 \
-  -e RUST_SERVER_STARTUP_ARGUMENTS="-batchmode -load -nographics $EXTRA_ARGS" \
   -e RUST_RCON_PASSWORD="$RCON_PASSWORD" \
   -e VAC_PUBLIC_IP="$SERVER_IP" \
   -v /opt/vac-rustdata:/steamcmd/rust \
-  -p 28015:28015/udp -p 28016:28016/udp -p 28082:28082/tcp \
-  docker.io/didstopia/rust-server:latest
+  -p 28015:28015/udp -p 28016:28016/tcp -p 28016:28016/udp \
+  -p 28082:28082/tcp -p 28084:28084/tcp -p 28085:28085/tcp \
+  --entrypoint /bin/bash \
+  docker.io/didstopia/rust-server:latest -c "
+    cd /steamcmd/rust
+    source ./carbon/tools/environment.sh
+    export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH:/steamcmd/rust/carbon/native
+    exec ./RustDedicated -batchmode -load -nographics \
+      +server.port 28015 +server.queryport 28016 +server.identity docker \
+      +server.worldsize \$WORLDSIZE +server.seed \$VAC_SEED \
+      +server.hostname \"VAC Server\" +server.maxplayers 50 \
+      \$EXTRA_ARGS \
+      +rcon.port 28016 +rcon.password \$RCON_PASSWORD +rcon.web 1 \
+      +app.port 28082 -logfile /dev/stdout"
 
 echo ""
 echo "=== Done. Join at:  connect $SERVER_IP:28015 ==="
