@@ -59,19 +59,32 @@ if [ ! -w /opt/vac-rustdata ]; then
   exit 1
 fi
 
-# Stage files the VacIntegrity plugin needs. If pre-built artifacts exist in
-# VAC_BUILD_DIR, copy them in; the plugin serves carbon/native/vac-daemon to
-# Linux clients at /vac-daemon.
-stage_native() {
-  local name="$1"
+# --- 3b. Stage the VacIntegrity plugin stack ----------------------------
+# The plugin is a Carbon .cs plugin plus a native lib + PQC keys. For the
+# server to ENFORCE (kick players with no daemon), all must be present in the
+# volume. Point VAC_BUILD_DIR at a dir containing these pre-built artifacts:
+#   libvac_integrity.so  kyber_public.der  kyber_secret.der
+#   mldsa65_public.der   mldsa65_secret.der  vac-daemon  VacIntegrity.cs
+stage_native() {          # stage_native <dest_subdir> <name>
+  local dest="$1" name="$2"
   if [ -n "${VAC_BUILD_DIR:-}" ] && [ -f "${VAC_BUILD_DIR}/${name}" ]; then
-    mkdir -p /opt/vac-rustdata/carbon/native
-    cp "${VAC_BUILD_DIR}/${name}" "/opt/vac-rustdata/carbon/native/${name}"
+    mkdir -p "/opt/vac-rustdata/carbon/${dest}"
+    cp "${VAC_BUILD_DIR}/${name}" "/opt/vac-rustdata/carbon/${dest}/${name}"
     echo "  Staged ${name}"
   fi
 }
-stage_native libvac_integrity.so
-stage_native vac-daemon
+if [ -n "${VAC_BUILD_DIR:-}" ]; then
+  stage_native native libvac_integrity.so
+  stage_native native vac-daemon
+  stage_native native kyber_public.der
+  stage_native native kyber_secret.der
+  stage_native native mldsa65_public.der
+  stage_native native mldsa65_secret.der
+  stage_native plugins VacIntegrity.cs
+else
+  echo "  NOTE: VAC_BUILD_DIR not set — VacIntegrity plugin NOT staged (no enforcement)."
+  echo "        Set VAC_BUILD_DIR (with .so/.cs/keys) to enable anti-cheat."
+fi
 
 # --- 4. Carbon (optional) ------------------------------------------------
 if [ "$ENABLE_CARBON" = "1" ]; then
