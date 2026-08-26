@@ -181,14 +181,12 @@ fi
 
 # --- 6. run -------------------------------------------------------------
 podman rm -f rust-server 2>/dev/null || true
-# Pre-create the mount host dir so podman/conmon resolves a valid working
-# directory; --workdir / avoids depending on the image WORKDIR existing at
-# launch (fixes "[conmon:e] Failed to get working directory").
+# Pre-create the mount host dir so the bind mount target exists.
 mkdir -p /opt/vac-rustdata
 # Export so the inline container command ($EXTRA_ARGS, $WORLDSIZE, $VAC_SEED,
 # $RCON_PASSWORD) resolves them from the environment.
 export EXTRA_ARGS WORLDSIZE VAC_SEED RCON_PASSWORD
-podman run -d --name rust-server --workdir / \
+podman run -d --name rust-server \
   -e RUST_SERVER_WORLDSIZE="$WORLDSIZE" \
   -e RUST_SERVER_SEED="$VAC_SEED" \
   -e RUST_SERVER_PORT=28015 \
