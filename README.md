@@ -142,6 +142,41 @@ The deploy script passes `SERVER_IP` through as `VAC_PUBLIC_IP`, so chat links,
 `/setup` and `/vac/status` all advertise the reachable public address instead of
 the podman bridge IP.
 
+### AWS security group (EC2)
+
+Create a security group and open the five VAC ports. Replace `<VPC_ID>` with
+your VPC id and confirm the rules to allow `0.0.0.0/0` (public players) or
+restrict to your IP.
+
+```bash
+APP=vac-rust
+SG_ID=$(aws ec2 create-security-group \
+  --group-name "$APP-sg" --description "VAC Rust server" \
+  --vpc-id <VPC_ID> --query GroupId --output text)
+
+aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
+  --ip-permissions '
+    [
+      {"IpProtocol":"udp","FromPort":28015,"ToPort":28015,"IpRanges":[{"CidrIp":"0.0.0.0/0"}]},
+      {"IpProtocol":"tcp","FromPort":28016,"ToPort":28016,"IpRanges":[{"CidrIp":"0.0.0.0/0"}]},
+      {"IpProtocol":"udp","FromPort":28016,"ToPort":28016,"IpRanges":[{"CidrIp":"0.0.0.0/0"}]},
+      {"IpProtocol":"tcp","FromPort":28082,"ToPort":28082,"IpRanges":[{"CidrIp":"0.0.0.0/0"}]},
+      {"IpProtocol":"tcp","FromPort":28084,"ToPort":28084,"IpRanges":[{"CidrIp":"0.0.0.0/0"}]},
+      {"IpProtocol":"tcp","FromPort":28085,"ToPort":28085,"IpRanges":[{"CidrIp":"0.0.0.0/0"}]}
+    ]'
+```
+
+Then attach it to the instance (replace `$INSTANCE_ID`):
+
+```bash
+aws ec2 modify-instance-attribute --instance-id $INSTANCE_ID \
+  --groups "$SG_ID"
+```
+
+> Remember: an **Elastic IP** may be required (your public IP won't match
+> `SERVER_IP` if you use an auto-assigned one that changes). Never pass your
+> instance's *private* IP as `SERVER_IP`.
+
 ## Firewall (ufw — self-hosted)
 
 Cloud hosts: open the five ports from the Public hosting table in your security
