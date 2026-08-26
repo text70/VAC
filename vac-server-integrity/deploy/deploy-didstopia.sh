@@ -22,6 +22,22 @@ ADMIN_STEAMID="${ADMIN_STEAMID:-}"
 WORLDSIZE="${WORLDSIZE:-1000}"
 RCON_PASSWORD="${RCON_PASSWORD:-vac-test}"
 ENABLE_CARBON="${ENABLE_CARBON:-1}"
+# Map seed: random-but-persistent. If VAC_SEED is set, use it. Otherwise reuse
+# the previously generated seed (kept in the volume) so redeploys/restarts
+# don't reshape the world; on a fresh volume a random seed is generated.
+SEED_FILE="/opt/vac-rustdata/.seed"
+VAC_SEED="${VAC_SEED:-}"
+if [ -z "$VAC_SEED" ] && [ -f "$SEED_FILE" ]; then
+  VAC_SEED="$(cat "$SEED_FILE")"
+fi
+if [ -z "$VAC_SEED" ]; then
+  VAC_SEED="$(( RANDOM * 32768 + RANDOM ))1467"  # arbitrary large int
+  mkdir -p /opt/vac-rustdata
+  printf '%s' "$VAC_SEED" > "$SEED_FILE"
+  echo "  Generated random map seed: $VAC_SEED (persisted)"
+else
+  echo "  Map seed: $VAC_SEED"
+fi
 
 echo "=== VAC Rust LAN Server — didstopia base (working config) ==="
 
@@ -153,6 +169,7 @@ fi
 podman rm -f rust-server 2>/dev/null || true
 podman run -d --name rust-server \
   -e RUST_SERVER_WORLDSIZE="$WORLDSIZE" \
+  -e RUST_SERVER_SEED="$VAC_SEED" \
   -e RUST_SERVER_PORT=28015 \
   -e RUST_SERVER_QUERYPORT=28016 \
   -e RUST_SERVER_STARTUP_ARGUMENTS="-batchmode -load -nographics $EXTRA_ARGS" \
