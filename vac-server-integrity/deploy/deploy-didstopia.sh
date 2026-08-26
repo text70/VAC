@@ -181,7 +181,11 @@ fi
 
 # --- 6. run -------------------------------------------------------------
 podman rm -f rust-server 2>/dev/null || true
-podman run -d --name rust-server \
+# Pre-create the mount host dir so podman/conmon resolves a valid working
+# directory; --workdir / avoids depending on the image WORKDIR existing at
+# launch (fixes "[conmon:e] Failed to get working directory").
+mkdir -p /opt/vac-rustdata
+podman run -d --name rust-server --workdir / \
   -e RUST_SERVER_WORLDSIZE="$WORLDSIZE" \
   -e RUST_SERVER_SEED="$VAC_SEED" \
   -e RUST_SERVER_PORT=28015 \
