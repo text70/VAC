@@ -122,13 +122,12 @@ build_vacbuild() {
   export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
   command -v cargo >/dev/null || { echo "ERROR: cargo not found after rustup install"; exit 1; }
 
-  echo "    cargo build (libvac_integrity.so, vac-daemon)..."
-  cargo build --release -p vac-integrity -p vac-daemon 2>&1 | tail -3 || { echo "ERROR: cargo build failed"; exit 1; }
+  echo "    cargo build (libvac_integrity.so, vac-daemon, gen-keys)..."
+  cargo build --release -p vac-integrity -p vac-daemon -p gen-keys 2>&1 | tail -3 || { echo "ERROR: cargo build failed"; exit 1; }
 
   echo "    generating PQC keys..."
   ./target/release/gen-keys "$VAC_BUILD_DIR" >/dev/null 2>&1 \
-    || cargo run --release -p gen-keys -- "$VAC_BUILD_DIR" >/dev/null 2>&1 \
-    || { echo "ERROR: gen-keys failed"; exit 1; }
+    || { echo "    gen-keys via cargo run..."; cargo run --release -p gen-keys -- "$VAC_BUILD_DIR" >/dev/null 2>&1 || { echo "ERROR: gen-keys failed"; exit 1; }; }
 
   cp -f target/release/libvac_integrity.so "$VAC_BUILD_DIR/" || exit 1
   cp -f target/release/vac-daemon          "$VAC_BUILD_DIR/" || exit 1
