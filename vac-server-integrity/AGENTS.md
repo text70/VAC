@@ -390,12 +390,22 @@ Server-local scans (`vac_scan`) still sign with the server-held key.
 
 Client scan module ids: 1–6 standard scans (sealed as 101–106),
 7 ring-0 procs (200), 8 hidden-proc diff (201), 9 memory scan (202),
-10 game-process memory scan (203). Module 203 layout:
+10 game-process memory scan (203), 11 game-process introspection (204).
+Module 203 layout:
 `[found][pid][status][rwx][priv_exec][hdr_mismatch]` — rwx/priv_exec are
 log-only telemetry (Discord/RTSS overlays map exec pages legitimately);
 only missing MZ headers on image-backed regions score points (manual-map
 evidence). On Windows, module 8 filters kernel artifacts (Idle/System/
 Memory Compression/Secure System/Registry) from both views before diffing.
+
+Module 11 / 204 — fallback-mode game introspection (works without kmod):
+`[found][pid][status][ld_flags][memfd_exec][anon_exec][rwx][tracer]`.
+Fills the gaps the fallback otherwise misses: `LD_*` injection env vars set
+in the GAME process itself, executable memfd:/deleted mappings (injection
+with no backing file), and ptrace tracer attached to the game. Server scores
+the high-confidence signals (ld_flags→SuspiciousEnv, memfd_exec→
+InjectedAssembly, tracer→TracerAttached); rwx/anon_exec stay log-only to
+avoid false positives from legal overlays.
 
 ### Client UX surface
 

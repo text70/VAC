@@ -102,7 +102,11 @@ struct MapEntry {
 }
 
 fn read_maps() -> Vec<MapEntry> {
-    let content = std::fs::read_to_string("/proc/self/maps").unwrap_or_default();
+    read_maps_for(std::process::id())
+}
+
+fn read_maps_for(pid: u32) -> Vec<MapEntry> {
+    let content = std::fs::read_to_string(format!("/proc/{}/maps", pid)).unwrap_or_default();
     let mut entries = Vec::new();
     for line in content.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
@@ -120,6 +124,104 @@ fn read_maps() -> Vec<MapEntry> {
         entries.push(MapEntry { start, end, perms, path });
     }
     entries
+}
+
+/// Find the Rust client (the game) process by name in the user-mode list.
+fn find_game_pid() -> Option<u32> {
+    user_mode_proc_list()
+        .into_iter()
+        .find(|(_, comm)| {
+            let c = comm.to_lowercase();
+            c.starts_with("rustclient") || c.starts_with("rustclient.exe")
+        })
+        .map(|(pid, _)| pid)
+}
+
+/// Fallback (no-kmod) game-process introspection.
+/// Returns [found, pid, status, ld_flags, memfd_exec, anon_exec, rwx, tracer]
+///   found: 1 if the game process was located
+///   pid:   game pid
+///   status: 0 ok, 1 not-found, 3 unreadable
+///   ld_flags: bitmask of LD_* injection env vars in the GAME process
+///   memfd_exec: count of executable memfd:/sealed:/anon mappings (no backing file)
+///   anon_exec:  anonymous executable mappings (no path at all)
+///   rwx:   count of RWX mappings
+///   tracer: TracerPid of the game (ptrace/cheat-debugger attached)
+fn game_introspection() -> Vec<u32> {
+    let mut out = vec![0u32; 8];
+    let pid = match find_game_pid() {
+        Some(p) => p,
+        None => return out,
+    };
+    out[0] = 1;
+    out[1] = pid;
+
+    // 1) LD_* injection env vars IN THE GAME PROCESS (these affect the game,
+    //    unlike the daemon's own env which modules 5 already checks).
+    let mut ld_flags = 0u32;
+    let mut memfd_exec = 0u32;
+    let mut anon_exec = 0u32;
+    let mut rwx = 0u32;
+    if let Ok(env) = std::fs::read(format!("/proc/{}/environ", pid)) {
+        for kv in env.split(|&b| b == 0) {
+            if kv.is_empty() {
+                continue;
+            }
+            let kv = String::from_utf8_lossy(kv);
+            let kv = kv.trim();
+            let Some(eq) = kv.find('=') else { continue };
+            let key = kv[..eq].to_ascii_lowercase();
+            let val = &kv[eq + 1..];
+            if val.is_empty() {
+                continue;
+            }
+            match key.as_str() {
+                "ld_preload" => ld_flags |= 1,
+                "ld_library_path" => ld_flags |= 2,
+                "ld_audit" => ld_flags |= 4,
+                "ld_debug" => ld_flags |= 8,
+                "winedlloverages" => ld_flags |= 16,
+                _ => {}
+            }
+        }
+    } else {
+        out[2] = 3; // unreadable
+    }
+
+    // 2) Executable mappings without a real backing file.
+    for e in read_maps_for(pid) {
+        if !e.perms.contains('x') {
+            continue;
+        }
+        if e.perms.contains("rwx") {
+            rwx += 1;
+        }
+        let p = e.path.to_lowercase();
+        if e.path.is_empty() {
+            anon_exec += 1;
+        } else if p.starts_with("/memfd:") || p.contains("(deleted)") || p.starts_with("/proc/self/fd/") {
+            // no backing ELF on disk: memfd_create / deleted inode injection
+            memfd_exec += 1;
+        }
+    }
+
+    // 3) Tracer attached to the game (ptrace debugger / cheat).
+    let mut tracer = 0u32;
+    if let Ok(status) = std::fs::read_to_string(format!("/proc/{}/status", pid)) {
+        for line in status.lines() {
+            if let Some(v) = line.strip_prefix("TracerPid:") {
+                tracer = v.trim().parse().unwrap_or(0);
+                break;
+            }
+        }
+    }
+
+    out[3] = ld_flags;
+    out[4] = memfd_exec;
+    out[5] = anon_exec;
+    out[6] = rwx;
+    out[7] = tracer;
+    out
 }
 
 fn handle_server(steam_id: u64, token: Option<&str>, server_addr: &str) -> Result<(), String> {
@@ -303,6 +405,18 @@ fn handle_server(steam_id: u64, token: Option<&str>, server_addr: &str) -> Resul
                         raw_payload.extend_from_slice(&regions_checked.to_le_bytes());
                         raw_payload.extend_from_slice(&text_mismatches.to_le_bytes());
                     }
+                    11 => {
+                        // Game-process introspection (fallback: no kmod needed).
+                        // Covers the vectors the fallback otherwise misses:
+                        //   LD_* injection into the GAME, memfd/deleted exec
+                        //   mappings, RWX + anon-exec, and game tracer attachment.
+                        let rec = game_introspection();
+                        eprintln!("[vac-daemon] Game intro: found={} pid={} ld_flags={:#x} memfd_exec={} anon_exec={} rwx={} tracer={}",
+                            rec[0], rec[1], rec[3], rec[4], rec[5], rec[6], rec[7]);
+                        for v in &rec {
+                            raw_payload.extend_from_slice(&v.to_le_bytes());
+                        }
+                    }
                     _ => {
                         // Standard client scan (modules 1-6)
                         let mut buf = DataBuffer::new();
@@ -323,6 +437,7 @@ fn handle_server(steam_id: u64, token: Option<&str>, server_addr: &str) -> Resul
                     8 => 201u32,
                     9 => 202u32,
                     10 => 203u32,
+                    11 => 204u32,
                     _ => module_id + 100,
                 };
 

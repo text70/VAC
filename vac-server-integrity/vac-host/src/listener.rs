@@ -129,6 +129,11 @@ fn decrypt_result(
                     // Game-process memory scan results
                     analyze_game_module(&buf, cursor, player_name, state);
                 }
+                204 => {
+                    // Game-process introspection (LD_* env, memfd/deleted exec,
+                    // RWX/anon-exec, tracer) — fallback-mode hardening
+                    analyze_game_introspection(&buf, cursor, player_name, state);
+                }
                 _ => {
                     // Server-local modules (1-6)
                     match mid {
@@ -261,6 +266,56 @@ fn analyze_hidden_module(buf: &DataBuffer, cursor: usize, player_name: &str, sta
         state.add_finding(FindingKind::HiddenProcess { pid: 0, comm: format!("{} missing-from-ring0", missing_count) },
             missing_count.saturating_mul(policy::POINTS_MISSING_RING0));
     }
+}
+
+/// Game-process introspection (client module 11 → sealed mid 204).
+/// Layout: [found][pid][status][ld_flags][memfd_exec][anon_exec][rwx][tracer]
+///
+/// Scoring is conservative: rwx/anon-exec can come from legitimate overlays
+/// (Discord/RTSS) so they are log-only. The high-confidence signals are:
+///   - LD_* injection env vars set in the GAME process (score SuspiciousEnv)
+///   - executable memfd:/deleted mappings in the game (score InjectedAssembly)
+///   - a tracer attached to the game (score TracerAttached)
+fn analyze_game_introspection(buf: &DataBuffer, cursor: usize, player_name: &str, state: &mut ScoreState) {
+    if cursor < 8 {
+        return;
+    }
+    let found = buf.raw[0];
+    let pid = buf.raw[1];
+    let status = buf.raw[2];
+    let ld_flags = buf.raw[3];
+    let memfd_exec = buf.raw[4];
+    let anon_exec = buf.raw[5];
+    let rwx = buf.raw[6];
+    let tracer = buf.raw[7];
+
+    if found == 0 {
+        eprintln!("[vac-listener] {} MODULE 204: game process not running", player_name);
+        return;
+    }
+    if status == 3 {
+        eprintln!("[vac-listener] {} MODULE 204: game pid={} unreadable", player_name, pid);
+        return;
+    }
+
+    if ld_flags != 0 {
+        eprintln!("[vac-listener] {} MODULE 204: game LD_* injection flags={:#x}", player_name, ld_flags);
+        state.add_finding(FindingKind::SuspiciousEnv { flags: ld_flags }, policy::POINTS_SUSPICIOUS_ENV);
+    }
+    if memfd_exec > 0 {
+        eprintln!("[vac-listener] {} MODULE 204: {} executable memfd/deleted mappings in game", player_name, memfd_exec);
+        state.add_finding(
+            FindingKind::InjectedAssembly { name: format!("memfd-exec({})", memfd_exec) },
+            memfd_exec.saturating_mul(policy::POINTS_INJECTED_ASSEMBLY),
+        );
+    }
+    if tracer != 0 {
+        eprintln!("[vac-listener] {} MODULE 204: game traced by pid {}", player_name, tracer);
+        state.add_finding(FindingKind::TracerAttached { tracer_pid: tracer }, policy::POINTS_TRACER);
+    }
+
+    eprintln!("[vac-listener] {} MODULE 204: pid={} rwx={} anon_exec={} (telemetry)",
+        player_name, pid, rwx, anon_exec);
 }
 
 fn analyze_memory_module(buf: &DataBuffer, cursor: usize, player_name: &str, state: &mut ScoreState) {
@@ -449,8 +504,8 @@ fn handle_client(mut stream: TcpStream, registered: Arc<Mutex<HashMap<u64, Regis
     // vac_server_daemon_connected() stays true — otherwise the plugin's
     // enforcement timer would kick compliant players during reconnect gaps.
     loop {
-    // Run all modules 1-10
-    for module_id in 1u32..=10 {
+    // Run all modules 1-11
+    for module_id in 1u32..=11 {
         // Generate random nonce for challenge-response
         let nonce: [u8; 8] = rand::random();
 

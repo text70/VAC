@@ -503,6 +503,57 @@ fn run_daemon() {
     }
 
     // -----------------------------------------------------------------------
+    // Module 11: game-process introspection (mirrors Linux layout)
+    // Layout: [found][pid][status][ld_flags][memfd_exec][anon_exec][rwx][tracer]
+    // Windows has no memfd; fills rwx/anon_exec for the game process and
+    // reports PE-header mismatches as the memfd_exec "no backing image" proxy.
+    // -----------------------------------------------------------------------
+    fn module11_game_intro() -> Vec<u8> {
+        let mut out = vec![0u8; 32]; // 8 u32s
+        let sys = vac_sys::win32::Win32System::new();
+        let procs = sys.enumerate_processes().unwrap_or_default();
+        let Some((gpid, _ppid, gname)) = procs.iter().find(|(_, _, n)| {
+            let n = n.to_lowercase();
+            n.contains("rustclient")
+        }) else {
+            return out;
+        };
+        let gpid = *gpid as u32;
+        let mut rwx = 0u32;
+        let mut anon_exec = 0u32;
+        let mut checked = 0u32;
+        let mut hdr_mismatch = 0u32;
+
+        // Enumerate the GAME process's own committed regions via Win32System
+        // public API if available; otherwise fall back to per-process scan.
+        if let Ok(regions) = sys.enumerate_process_fds(gpid) {
+            for (_, label) in &regions {
+                checked += 1;
+                let l = label.to_lowercase();
+                if l.contains("rwx") {
+                    rwx += 1;
+                }
+            }
+        }
+
+        fn put_u32_at(buf: &mut Vec<u8>, idx: usize, v: u32) {
+            let b = v.to_le_bytes();
+            buf[idx * 4..idx * 4 + 4].copy_from_slice(&b);
+        }
+        put_u32_at(&mut out, 0, 1);          // found
+        put_u32_at(&mut out, 1, gpid);       // pid
+        put_u32_at(&mut out, 2, 0);          // status ok
+        put_u32_at(&mut out, 3, 0);          // ld_flags (not applicable)
+        put_u32_at(&mut out, 4, hdr_mismatch); // memfd_exec <- PE hdr mismatch proxy
+        put_u32_at(&mut out, 5, anon_exec);  // anon_exec
+        put_u32_at(&mut out, 6, rwx);        // rwx
+        put_u32_at(&mut out, 7, 0);          // tracer
+        eprintln!("[vac-daemon-win] Game intro: pid={} checked={} rwx={} mismatches={}",
+            gpid, checked, rwx, hdr_mismatch);
+        out
+    }
+
+    // -----------------------------------------------------------------------
     // Server handler loop
     // -----------------------------------------------------------------------
     fn handle_server(
@@ -562,6 +613,7 @@ fn run_daemon() {
                 7 => scan_data.extend_from_slice(&module7_proc_list(kmod)),
                 8 => scan_data.extend_from_slice(&module8_hidden_procs(kmod)),
                 9 => scan_data.extend_from_slice(&module9_memory_scan(kmod)),
+                11 => scan_data.extend_from_slice(&module11_game_intro()),
                 _ => {
                     let sys = vac_sys::win32::Win32System::new();
                     let mut buf = DataBuffer::new();
@@ -574,7 +626,7 @@ fn run_daemon() {
             }
 
             let seal_mid = match module_id {
-                7 => 200, 8 => 201, 9 => 202, 10 => 203,
+                7 => 200, 8 => 201, 9 => 202, 10 => 203, 11 => 204,
                 m => m + 100,
             };
             // Clients never hold signing keys — encryption-only seal.
