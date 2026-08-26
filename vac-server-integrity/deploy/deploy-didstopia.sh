@@ -32,6 +32,7 @@ if ! command -v podman >/dev/null; then
   apt-get install -y podman podman-compose
 fi
 if ! command -v wget >/dev/null; then apt-get install -y wget; fi
+if ! command -v git >/dev/null; then apt-get install -y git; fi
 
 # --- 2. auto-detect host IP if not given --------------------------------
 if [ -z "$SERVER_IP" ]; then
@@ -59,32 +60,76 @@ if [ ! -w /opt/vac-rustdata ]; then
   exit 1
 fi
 
-# --- 3b. Stage the VacIntegrity plugin stack ----------------------------
+# --- 3b. Build + stage the VacIntegrity plugin stack ---------------------
 # The plugin is a Carbon .cs plugin plus a native lib + PQC keys. For the
 # server to ENFORCE (kick players with no daemon), all must be present in the
-# volume. Point VAC_BUILD_DIR at a dir containing these pre-built artifacts:
+# volume. If VAC_BUILD_DIR is unset (or missing artifacts), we BUILD them
+# right here from the GitHub repo (Rust toolchain + gen-keys), so no scp is
+# needed. Artifacts expected in VAC_BUILD_DIR:
 #   libvac_integrity.so  kyber_public.der  kyber_secret.der
 #   mldsa65_public.der   mldsa65_secret.der  vac-daemon  VacIntegrity.cs
+VAC_BUILD_DIR="${VAC_BUILD_DIR:-/opt/vacbuild}"
+
+build_vacbuild() {
+  local need=0
+  for f in libvac_integrity.so vac-daemon kyber_public.der kyber_secret.der \
+           mldsa65_public.der mldsa65_secret.der VacIntegrity.cs; do
+    [ -f "${VAC_BUILD_DIR}/${f}" ] || need=1
+  done
+  [ "$need" = "0" ] && return 0
+
+  echo "  Building VacIntegrity artifacts in ${VAC_BUILD_DIR} (one-time)..."
+  mkdir -p "$VAC_BUILD_DIR"
+  local BUILD_SRC="/opt/vacbuild-src"
+  rm -rf "$BUILD_SRC"
+  git clone -q --depth 1 https://github.com/text70/VAC.git "$BUILD_SRC" || { echo "ERROR: repo clone failed"; exit 1; }
+  cd "$BUILD_SRC/vac-server-integrity"
+
+  # Rust toolchain (only needed for this build)
+  if ! command -v rustc >/dev/null; then
+    echo "    Installing Rust (rustup)..."
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+    export PATH="$HOME/.cargo/bin:$PATH"
+  fi
+
+  echo "    cargo build (libvac_integrity.so, vac-daemon)..."
+  cargo build --release -p vac-integrity -p vac-daemon 2>&1 | tail -3 || { echo "ERROR: cargo build failed"; exit 1; }
+
+  echo "    generating PQC keys..."
+  ./target/release/gen-keys "$VAC_BUILD_DIR" >/dev/null 2>&1 \
+    || cargo run --release -p gen-keys -- "$VAC_BUILD_DIR" >/dev/null 2>&1 \
+    || { echo "ERROR: gen-keys failed"; exit 1; }
+
+  cp -f target/release/libvac_integrity.so "$VAC_BUILD_DIR/" || exit 1
+  cp -f target/release/vac-daemon          "$VAC_BUILD_DIR/" || exit 1
+  cp -f vac-plugin/VacIntegrity.cs         "$VAC_BUILD_DIR/" || exit 1
+
+  # Free space: drop the transient build tree (4GB cloud hosts are tight)
+  rm -rf "$BUILD_SRC"
+  # gen-keys writes 600 on secrets already; ensure readable
+  chmod -R a+r "$VAC_BUILD_DIR" 2>/dev/null || true
+  echo "  Built VacIntegrity artifacts in ${VAC_BUILD_DIR}"
+}
+
+build_vacbuild
+
 stage_native() {          # stage_native <dest_subdir> <name>
   local dest="$1" name="$2"
-  if [ -n "${VAC_BUILD_DIR:-}" ] && [ -f "${VAC_BUILD_DIR}/${name}" ]; then
+  if [ -f "${VAC_BUILD_DIR}/${name}" ]; then
     mkdir -p "/opt/vac-rustdata/carbon/${dest}"
     cp "${VAC_BUILD_DIR}/${name}" "/opt/vac-rustdata/carbon/${dest}/${name}"
     echo "  Staged ${name}"
+  else
+    echo "  WARN: missing ${VAC_BUILD_DIR}/${name}"
   fi
 }
-if [ -n "${VAC_BUILD_DIR:-}" ]; then
-  stage_native native libvac_integrity.so
-  stage_native native vac-daemon
-  stage_native native kyber_public.der
-  stage_native native kyber_secret.der
-  stage_native native mldsa65_public.der
-  stage_native native mldsa65_secret.der
-  stage_native plugins VacIntegrity.cs
-else
-  echo "  NOTE: VAC_BUILD_DIR not set — VacIntegrity plugin NOT staged (no enforcement)."
-  echo "        Set VAC_BUILD_DIR (with .so/.cs/keys) to enable anti-cheat."
-fi
+stage_native native libvac_integrity.so
+stage_native native vac-daemon
+stage_native native kyber_public.der
+stage_native native kyber_secret.der
+stage_native native mldsa65_public.der
+stage_native native mldsa65_secret.der
+stage_native plugins VacIntegrity.cs
 
 # --- 4. Carbon (optional) ------------------------------------------------
 if [ "$ENABLE_CARBON" = "1" ]; then
