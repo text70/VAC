@@ -41,7 +41,23 @@ fi
 echo "  Server IP: $SERVER_IP"
 
 # --- 3. storage volume ---------------------------------------------------
+# Ensure the volume dir exists and is writable by the current user. On a fresh
+# host /opt is root-owned; if a previous root run created the dir, the current
+# (possibly non-root) user must either own it or write via group.
 mkdir -p /opt/vac-rustdata/carbon/native
+if [ -w /opt/vac-rustdata ]; then
+  : # already writable
+elif [ "$(id -u)" = "0" ]; then
+  chown "$(id -u):$(id -g)" /opt/vac-rustdata 2>/dev/null || true
+else
+  echo "  WARNING: /opt/vac-rustdata is not writable by $USER; trying group write..."
+  chmod g+w /opt/vac-rustdata 2>/dev/null || true
+fi
+# Ensure it's actually writable before continuing.
+if [ ! -w /opt/vac-rustdata ]; then
+  echo "ERROR: cannot write to /opt/vac-rustdata. Re-run as root, or: sudo chown -R \$(whoami):\$(whoami) /opt/vac-rustdata"
+  exit 1
+fi
 
 # Stage files the VacIntegrity plugin needs. If pre-built artifacts exist in
 # VAC_BUILD_DIR, copy them in; the plugin serves carbon/native/vac-daemon to
@@ -86,7 +102,7 @@ podman run -d --name rust-server \
   -e VAC_PUBLIC_IP="$SERVER_IP" \
   -v /opt/vac-rustdata:/steamcmd/rust \
   -p 28015:28015/udp -p 28016:28016/udp -p 28082:28082/tcp \
-  didstopia/rust-server:latest
+  docker.io/didstopia/rust-server:latest
 
 echo ""
 echo "=== Done. Join at:  connect $SERVER_IP:28015 ==="
