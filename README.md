@@ -10,11 +10,21 @@ server).
 - **Host**: Debian/Ubuntu, Podman with internet connection
 
 **What it provides**
-- **Base image**: `didstopia/rust-server` (this is bundled in the podman/docker image)
-- **Carbon Mod framework**: Carbon.gg (supports runtime `.cs` plugins such as VacIntegrity) 
-- **Built in Server Anti-cheat**: VacIntegrity plugin — `libvac_integrity.so` + PQC keys 
-- **Client Daemon**: Windows or Proton/Linux  downlad from host server 
+- **Base image**: [didstopia/rust-server](https://hub.docker.com/r/didstopia/rust-server) (bundled in the podman/docker image)
+- **Carbon Mod framework**: [Carbon.gg](https://carbonmod.gg) — [docs](https://docs.carbonmod.gg/) — [GitHub](https://github.com/CarbonCommunity/Carbon) (supports runtime `.cs` plugins such as VacIntegrity)
+- **Built in Server Anti-cheat**: VacIntegrity plugin — [`libvac_integrity.so`](https://github.com/text70/VAC/tree/main/vac-server-integrity/vac-host) + PQC keys
+- **Client Daemon**: Windows or Proton/Linux, downloaded from host server
 
+## Links & references
+
+- **Repository**: [github.com/text70/VAC](https://github.com/text70/VAC)
+- **Deploy script**: [`deploy/deploy-didstopia.sh`](https://github.com/text70/VAC/blob/main/vac-server-integrity/deploy/deploy-didstopia.sh)
+- **VacIntegrity plugin source**: [`vac-plugin/VacIntegrity.cs`](https://github.com/text70/VAC/blob/main/vac-server-integrity/vac-plugin/VacIntegrity.cs)
+- **VAC Rust stack (daemon, native lib, modules)**: [`vac-server-integrity/`](https://github.com/text70/VAC/tree/main/vac-server-integrity)
+- **EAC/LAN technical findings**: [`docs/lan-linux-eac-findings.md`](vac-server-integrity/docs/lan-linux-eac-findings.md)
+- **Original Valve Anti-Cheat reverse-engineering**: [`docs/original-vac-re.md`](docs/original-vac-re.md)
+- **Carbon**: [docs.carbonmod.gg](https://docs.carbonmod.gg/) · [GitHub](https://github.com/CarbonCommunity/Carbon)
+- **Base image**: [didstopia/rust-server on Docker Hub](https://hub.docker.com/r/didstopia/rust-server) · [source](https://github.com/Didstopia/rust-server)
 
 ## Quickstart launch (curl from GitHub)
 
