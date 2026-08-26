@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#F7F5F0"/>
+  <!-- square seal -->
+  <rect x="104" y="104" width="304" height="304" rx="28"
+        fill="none" stroke="#161B22" stroke-width="16"/>
+  <!-- hollow V cut from the face -->
+  <path d="M186 210 L256 326 L326 210"
+        fill="none" stroke="#161B22" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"
+        clip-path="url(#seal)"/>
+  <!-- accent: small keyhole/dot at apex -->
+  <circle cx="256" cy="360" r="14" fill="#E4572E"/>
+  <defs>
+    <clipPath id="seal">
+      <rect x="104" y="104" width="304" height="304" rx="28"/>
+    </clipPath>
+  </defs>
+  <!-- corner registration ticks for a mechanical, printed feel -->
+  <path d="M104 30 L104 74 M30 104 L74 104 M104 438 L104 482 M30 408 L74 408"
+        stroke="#161B22" stroke-width="10" stroke-linecap="round" opacity="0.6"/>
+  <path d="M382 30 L382 74 M438 104 L482 104 M382 438 L382 482 M438 408 L482 408"
+        stroke="#161B22" stroke-width="10" stroke-linecap="round" opacity="0.6"/>
+</svg>

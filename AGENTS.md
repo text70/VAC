@@ -1,14 +1,17 @@
-# VAC — Valve Anti-Cheat reconstruction
+# VAC — Valve Anti-Cheat reconstruction (archived)
 
-Windows-only C DLL. Built with Visual Studio 2019 (v142, WinSDK 10.0). Open `VAC.sln` or build `VAC/VAC.vcxproj` from CLI.
+> This is the historical Windows-C reverse-engineering project, now archived
+> under `archive/`. It is not part of the active `vac-server-integrity` server.
+
+Windows-only C DLL. Built with Visual Studio 2019 (v142, WinSDK 10.0). Open `archive/VAC.sln` or build `archive/VAC/VAC.vcxproj` from CLI.
 
 ## Build
 
 ```bash
 # Debug 32-bit
-msbuild VAC.sln /p:Configuration=Debug /p:Platform=Win32
+msbuild archive/VAC.sln /p:Configuration=Debug /p:Platform=Win32
 # Release 64-bit
-msbuild VAC.sln /p:Configuration=Release /p:Platform=x64
+msbuild archive/VAC.sln /p:Configuration=Release /p:Platform=x64
 ```
 
 Preprocessor: `VAC_EXPORTS;_WINDOWS;_USRDLL` always defined. No precompiled header for Win32 configs (x64 Debug/Release uses precompiled headers via `pch.h`).
@@ -25,20 +28,18 @@ Preprocessor: `VAC_EXPORTS;_WINDOWS;_USRDLL` always defined. No precompiled head
 
 | Directory | Purpose |
 |-----------|---------|
-| `VAC/` | Project root — `Utils.c/h`, `Vector.c/h` |
-| `VAC/Encryption/` | ICE cipher implementation (`Ice.c/h`) |
-| `VAC/Modules/DeviceInfo/` | Device enumeration module |
-| `VAC/Modules/DriverInfo/` | Driver enumeration module |
-| `VAC/Modules/ProcessHandleList/` | Process/handle enumeration (module #2) |
-| `VAC/Modules/ProcessMonitor/` | Polymorphic scan module (module #3) |
-| `VAC/Modules/ReadModules/` | Module loading/reading utility |
-| `VAC/Modules/SystemInfo/` | System info collection (module #1) |
+| `archive/VAC/` | Project root — `Utils.c/h`, `Vector.c/h` |
+| `archive/VAC/Encryption/` | ICE cipher implementation (`Ice.c/h`) |
+| `archive/VAC/Modules/DeviceInfo/` | Device enumeration module |
+| `archive/VAC/Modules/DriverInfo/` | Driver enumeration module |
+| `archive/VAC/Modules/ProcessHandleList/` | Process/handle enumeration (module #2) |
+| `archive/VAC/Modules/ProcessMonitor/` | Polymorphic scan module (module #3) |
+| `archive/VAC/Modules/ReadModules/` | Module loading/reading utility |
+| `archive/VAC/Modules/SystemInfo/` | System info collection (module #1) |
 
 Modules are streamed as separate DLLs from Valve's servers; each one collects data into a fixed-size `DWORD data[2048]` buffer and encrypts it with XOR/ICE before sending.
 
 ## No tests / CI
 
 No test framework, no CI config. Verification is manual by diffing against disassembly or checking struct layouts match the original.
-
-#opencode -s ses_04f43069bffeQCrPuzRQV7V0K2
 

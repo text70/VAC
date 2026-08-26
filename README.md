@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logos/vac-wordmark.png" alt="VAC Integrity" width="520">
+</p>
+
 # VAC Integrity — Rust Server with VacIntegrity Anti-Cheat 
 
 The Rust Linux server for Proton/Linux and Windows clients. 
@@ -253,8 +257,7 @@ You can check your live status at:
 ## Notes
 - Server-side EAC is off (`server.encryption 0`) — private/LAN only.
 - **Carbon `.cs` plugins compile at runtime on this base** (verified:
-  VacIntegrity loads as a `.cs` plugin). Earlier notes to the contrary were a
-  false positive from an unbooted/uncompiled container state.
+  VacIntegrity loads as a `.cs` plugin). 
 - See [`vac-server-integrity/docs/lan-linux-eac-findings.md`](vac-server-integrity/docs/lan-linux-eac-findings.md) for
   the full technical history of the EAC/LAN work.
 

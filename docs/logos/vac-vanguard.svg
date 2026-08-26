@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- ground -->
+  <rect width="512" height="512" fill="#F7F5F0"/>
+  <!-- shield body -->
+  <path d="M256 64
+           L388 108
+           L388 244
+           C388 330 334 392 256 432
+           C178 392 124 330 124 244
+           L124 108 Z"
+        fill="#161B22" fill-opacity="0.04" stroke="#161B22" stroke-width="16" stroke-linejoin="round"/>
+  <!-- shield inner stroke -->
+  <path d="M256 104
+           L356 138
+           L356 242
+           C356 314 310 366 256 396
+           C202 366 156 314 156 242
+           L156 138 Z"
+        fill="none" stroke="#161B22" stroke-width="6" stroke-linejoin="round" opacity="0.5"/>
+  <!-- V mark -->
+  <path d="M196 196 L256 292 L316 196"
+        fill="none" stroke="#161B22" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- verification dot in the apex -->
+  <circle cx="256" cy="332" r="15" fill="#E4572E"/>
+</svg>

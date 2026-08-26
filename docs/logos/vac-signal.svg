@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#161B22"/>
+  <!-- V : two converging bars -->
+  <path d="M140 132 L256 350 L372 132"
+        fill="none" stroke="#F7F5F0" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- signal tick rising out of the apex -->
+  <path d="M256 350 L256 250"
+        fill="none" stroke="#E4572E" stroke-width="22" stroke-linecap="round"/>
+  <!-- baseline tick -->
+  <path d="M150 400 L362 400" stroke="#F7F5F0" stroke-width="10" stroke-linecap="round" opacity="0.85"/>
+</svg>

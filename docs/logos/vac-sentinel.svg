@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#FCFAF6"/>
+  <!-- outer octagon (seal) -->
+  <path d="M256 76 L400 134 L458 256 L400 378 L256 436 L112 378 L54 256 L112 134 Z"
+        fill="none" stroke="#191E24" stroke-width="20" stroke-linejoin="miter"/>
+  <!-- negative-space V -->
+  <path d="M176 172 L256 318 L336 172"
+        fill="none" stroke="#191E24" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- advancing check -->
+  <path d="M182 340 L212 378 L244 340"
+        fill="none" stroke="#E4572E" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- counter-ticks -->
+  <path d="M66 196 L118 196" stroke="#191E24" stroke-width="12" stroke-linecap="round"/>
+  <path d="M66 316 L118 316" stroke="#191E24" stroke-width="12" stroke-linecap="round"/>
+  <path d="M394 196 L446 196" stroke="#191E24" stroke-width="12" stroke-linecap="round"/>
+  <path d="M394 316 L446 316" stroke="#191E24" stroke-width="12" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 220" width="900" height="220">
+  <rect width="900" height="220" fill="#F7F5F0"/>
+  <!-- mark: V in a square -->
+  <rect x="60" y="48" width="132" height="132" rx="18" fill="#161B22"/>
+  <path d="M100 96 L126 132 L152 96"
+        fill="none" stroke="#F7F5F0" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="126" cy="142" r="8" fill="#E4572E"/>
+  <!-- wordmark: VAC (weight) + Integrity (light) -->
+  <g fill="#161B22" font-family="Inter,'Helvetica Neue',Arial,sans-serif">
+    <text x="236" y="120" font-size="92" font-weight="800" letter-spacing="-2">VAC</text>
+    <text x="402" y="116" font-size="40" font-weight="300" letter-spacing="14" fill="#E4572E">INTEGRITY</text>
+  </g>
+  <text x="236" y="168" font-size="20" font-weight="400" letter-spacing="6" fill="#8A8F98"
+        font-family="Inter,'Helvetica Neue',Arial,sans-serif">SERVER ANTI-CHEAT</text>
+</svg>
