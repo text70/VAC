@@ -49,6 +49,13 @@ if ! command -v podman >/dev/null; then
 fi
 if ! command -v wget >/dev/null; then apt-get install -y wget; fi
 if ! command -v git >/dev/null; then apt-get install -y git; fi
+# C toolchain: Rust needs a C linker (`cc`/gcc) to build crates that link C
+# (e.g. libc). Without it, `cargo build` fails on the libc build script.
+if ! command -v cc >/dev/null && ! command -v gcc >/dev/null; then
+  echo "Installing C toolchain (build-essential)..."
+  apt-get update
+  apt-get install -y build-essential
+fi
 
 # --- 2. auto-detect host IP if not given --------------------------------
 if [ -z "$SERVER_IP" ]; then
@@ -105,8 +112,15 @@ build_vacbuild() {
   if ! command -v rustc >/dev/null; then
     echo "    Installing Rust (rustup)..."
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-    export PATH="$HOME/.cargo/bin:$PATH"
   fi
+  # Ensure cargo/rustc are on PATH. rustup installs to $CARGO_HOME (default
+  # ~/.cargo); source its env if present, else fall back to common paths.
+  if [ -f "${CARGO_HOME:-$HOME/.cargo}/env" ]; then
+    # shellcheck disable=SC1090
+    . "${CARGO_HOME:-$HOME/.cargo}/env"
+  fi
+  export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+  command -v cargo >/dev/null || { echo "ERROR: cargo not found after rustup install"; exit 1; }
 
   echo "    cargo build (libvac_integrity.so, vac-daemon)..."
   cargo build --release -p vac-integrity -p vac-daemon 2>&1 | tail -3 || { echo "ERROR: cargo build failed"; exit 1; }
