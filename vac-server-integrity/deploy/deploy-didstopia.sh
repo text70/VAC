@@ -204,10 +204,34 @@ podman pull -q docker.io/didstopia/rust-server:latest >/dev/null 2>&1 || echo " 
 # Pass the values the inline command uses as real container env so they expand
 # inside the container (WORLDSIZE/VAC_SEED/EXTRA_ARGS/RCON_PASSWORD must be
 # -e'd; export alone on the host does nothing for podman run).
-# Copy the launcher into the volume and use it as the entrypoint. A real script
-# file avoids the "[conmon:e] Failed to get working directory" error that the
-# long inline `-c "..."; ...` here-string triggers on podman 5.x.
-cp -f "$(dirname "$0")/launch.sh" /opt/vac-rustdata/launch.sh
+# Write the launcher into the volume and use it as the container entrypoint.
+# A real script file avoids the "[conmon:e] Failed to get working directory"
+# error that a long inline `-c` here-string triggers on podman 5.x. Inlined
+# here so the `curl | bash` one-liner works without a sibling file.
+cat > /opt/vac-rustdata/launch.sh <<'LAUNCH'
+#!/bin/bash
+set -euo pipefail
+cd /steamcmd/rust
+if [ ! -x ./RustDedicated ]; then
+  echo "[launch] Installing RustDedicated via steamcmd (first boot ~5-15 min)..."
+  steamcmd +force_install_dir /steamcmd/rust +login anonymous \
+    +app_update 258550 validate +quit 2>&1 | tail -5
+fi
+if [ ! -x ./RustDedicated ]; then
+  echo "[launch] ERROR: RustDedicated still missing after install"
+  exit 1
+fi
+# shellcheck disable=SC1091
+source ./carbon/tools/environment.sh || true
+export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/steamcmd/rust/carbon/native"
+exec ./RustDedicated -batchmode -load -nographics \
+  +server.port 28015 +server.queryport 28016 +server.identity docker \
+  +server.worldsize "$WORLDSIZE" +server.seed "$VAC_SEED" \
+  +server.hostname "VAC Server" +server.maxplayers 50 \
+  $EXTRA_ARGS \
+  +rcon.port 28016 +rcon.password "$RCON_PASSWORD" +rcon.web 1 \
+  +app.port 28082 -logfile /dev/stdout
+LAUNCH
 chmod +x /opt/vac-rustdata/launch.sh
 podman run -d --name rust-server \
   -e WORLDSIZE="$WORLDSIZE" \
