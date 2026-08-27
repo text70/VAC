@@ -204,7 +204,12 @@ podman pull -q docker.io/didstopia/rust-server:latest >/dev/null 2>&1 || echo " 
 # Pass the values the inline command uses as real container env so they expand
 # inside the container (WORLDSIZE/VAC_SEED/EXTRA_ARGS/RCON_PASSWORD must be
 # -e'd; export alone on the host does nothing for podman run).
-podman run -d --name rust-server --workdir / \
+# Copy the launcher into the volume and use it as the entrypoint. A real script
+# file avoids the "[conmon:e] Failed to get working directory" error that the
+# long inline `-c "..."; ...` here-string triggers on podman 5.x.
+cp -f "$(dirname "$0")/launch.sh" /opt/vac-rustdata/launch.sh
+chmod +x /opt/vac-rustdata/launch.sh
+podman run -d --name rust-server \
   -e WORLDSIZE="$WORLDSIZE" \
   -e VAC_SEED="$VAC_SEED" \
   -e EXTRA_ARGS="$EXTRA_ARGS" \
@@ -215,32 +220,8 @@ podman run -d --name rust-server --workdir / \
   -v /opt/vac-rustdata:/steamcmd/rust:z \
   -p 28015:28015/udp -p 28016:28016/tcp -p 28016:28016/udp \
   -p 28082:28082/tcp -p 28084:28084/tcp -p 28085:28085/tcp \
-  --entrypoint /bin/bash \
-  docker.io/didstopia/rust-server:latest -c "
-    cd /steamcmd/rust
-
-    # Install / update the RustDedicated game into this volume if missing.
-    # didstopia's stock start.sh normally does this; our entrypoint override
-    # must replicate it or ./RustDedicated won't exist on a fresh host.
-    if [ ! -x ./RustDedicated ]; then
-      echo '  [deploy] Installing RustDedicated via steamcmd (first boot ~5-15 min)...'
-      steamcmd +force_install_dir /steamcmd/rust +login anonymous \
-        +app_update 258550 validate +quit 2>&1 | tail -5
-    fi
-    if [ ! -x ./RustDedicated ]; then
-      echo 'ERROR: RustDedicated still missing after install'
-      exit 1
-    fi
-
-    source ./carbon/tools/environment.sh
-    export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH:/steamcmd/rust/carbon/native
-    exec ./RustDedicated -batchmode -load -nographics \
-      +server.port 28015 +server.queryport 28016 +server.identity docker \
-      +server.worldsize \$WORLDSIZE +server.seed \$VAC_SEED \
-      +server.hostname \"VAC Server\" +server.maxplayers 50 \
-      \$EXTRA_ARGS \
-      +rcon.port 28016 +rcon.password \$RCON_PASSWORD +rcon.web 1 \
-      +app.port 28082 -logfile /dev/stdout"
+  --entrypoint /steamcmd/rust/launch.sh \
+  docker.io/didstopia/rust-server:latest
 
 echo ""
 echo "=== Done. Join at:  connect $SERVER_IP:28015 ==="
