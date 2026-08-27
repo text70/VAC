@@ -25,6 +25,14 @@ ADMIN_STEAMID="${ADMIN_STEAMID:-}"
 WORLDSIZE="${WORLDSIZE:-1000}"
 RCON_PASSWORD="${RCON_PASSWORD:-vac-test}"
 ENABLE_CARBON="${ENABLE_CARBON:-1}"
+# Browser-listing metadata (Modded tab). NAME + DESCRIPTION show in the
+# client's server browser; URL and a 256x256 HEADERIMAGE are optional dress.
+# Quote values with spaces/special chars on the deploy command line, e.g.
+#   SERVER_NAME='My Server | EU' SERVER_DESCRIPTION='fun times'
+SERVER_NAME="${SERVER_NAME:-VAC Server}"
+SERVER_DESCRIPTION="${SERVER_DESCRIPTION:-}"
+SERVER_URL="${SERVER_URL:-}"
+SERVER_HEADERIMAGE="${SERVER_HEADERIMAGE:-}"
 # Data volume + artifact dirs follow the podman mode: rootful runs (sudo,
 # cloud) keep everything under /root; rootless runs (plain user, LAN) use
 # $HOME so the invoking user owns the volume.
@@ -267,10 +275,22 @@ fi
 # shellcheck disable=SC1091
 source ./carbon/tools/environment.sh || true
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/steamcmd/rust/carbon/native"
+# Browser-listing cvars. Quoted array elements keep spaces and special
+# characters (& | —) intact as single argv values for RustDedicated.
+NAME_ARGS=(+server.hostname "${SERVER_NAME:-VAC Server}")
+if [ -n "${SERVER_DESCRIPTION:-}" ]; then
+  NAME_ARGS+=(+server.description "$SERVER_DESCRIPTION")
+fi
+if [ -n "${SERVER_URL:-}" ]; then
+  NAME_ARGS+=(+server.url "$SERVER_URL")
+fi
+if [ -n "${SERVER_HEADERIMAGE:-}" ]; then
+  NAME_ARGS+=(+server.headerimage "$SERVER_HEADERIMAGE")
+fi
 exec "$@" ./RustDedicated -batchmode -load -nographics \
   +server.port 28015 +server.queryport 28016 +server.identity docker \
   +server.worldsize "$WORLDSIZE" +server.seed "$VAC_SEED" \
-  +server.hostname "VAC Server" +server.maxplayers 50 \
+  "${NAME_ARGS[@]}" +server.maxplayers 50 \
   $EXTRA_ARGS \
   +rcon.port 28016 +rcon.password "$RCON_PASSWORD" +rcon.web 1 \
   +app.port 28082 -logfile /dev/stdout
@@ -290,6 +310,10 @@ podman run -d --name rust-server \
   -e EXTRA_ARGS="$EXTRA_ARGS" \
   -e RCON_PASSWORD="$RCON_PASSWORD" \
   -e RUST_RCON_PASSWORD="$RCON_PASSWORD" \
+  -e SERVER_NAME="$SERVER_NAME" \
+  -e SERVER_DESCRIPTION="$SERVER_DESCRIPTION" \
+  -e SERVER_URL="$SERVER_URL" \
+  -e SERVER_HEADERIMAGE="$SERVER_HEADERIMAGE" \
   -e RUST_SERVER_PORT=28015 \
   -e RUST_SERVER_QUERYPORT=28016 \
   -e VAC_PUBLIC_IP="$SERVER_IP" \

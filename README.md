@@ -203,6 +203,40 @@ If the server dies right after "Occlusion Grid … Processing … batches" with
 `Exiting..` in the logs, it's the engine being killed for memory — lower
 `WORLDSIZE` (or raise the instance).
 
+## Server name & browser listing
+
+Set how the server appears in the client's server browser (the deploy script
+passes these to the game as launch args):
+
+| Env | Default | Browser field |
+|-----|---------|---------------|
+| `SERVER_NAME` | `VAC Server` | server name (`server.hostname`) |
+| `SERVER_DESCRIPTION` | *(empty)* | blurb under the name (`server.description`) |
+| `SERVER_URL` | *(empty)* | website link (`server.url`) |
+| `SERVER_HEADERIMAGE` | *(empty)* | logo — direct URL to a **256×256** PNG/JPG (`server.headerimage`) |
+
+```bash
+curl -sL https://raw.githubusercontent.com/text70/VAC/main/vac-server-integrity/deploy/deploy-didstopia.sh | \
+  sudo env SERVER_NAME='Proton/Linux & Windows Client Test Server - VAC | US' \
+    SERVER_DESCRIPTION='Custom Anti-cheat enforced (VAC Integrity) — daemon required.' \
+    ADMIN_STEAMID=<your-steamid64> SERVER_IP=<your-server-ip> bash
+```
+
+To rename a **running** server without a restart (from the host):
+
+```bash
+sudo podman exec rust-server rcon 'server.hostname "My New Name"'
+sudo podman exec rust-server rcon 'server.writecfg'
+```
+
+Listing notes:
+- Carbon puts the server in the **Modded** tab automatically — players find it
+  there via search
+- New/renamed entries take a few minutes to propagate to the master server
+- EAC-off (`server.encryption 0`) does **not** prevent listing
+- Requires Steam registration (log line `SteamServer Connected` on boot) and
+  the query port `28016` reachable — both are defaults here
+
 ## Firewall (ufw — self-hosted)
 
 Cloud hosts: open the five ports from the Public hosting table in your security

@@ -99,6 +99,14 @@ script:
   `RCON: 127.0.0.1 attempted to connect with incorrect password`). When
   debugging grants, check that counter first.
 
+- **Browser listing** — `server.hostname/-description/-url/-headerimage` are
+  launch args built in `launch.sh` from the `SERVER_NAME`/`SERVER_DESCRIPTION`/
+  `SERVER_URL`/`SERVER_HEADERIMAGE` envs (`NAME_ARGS` array — values must stay
+  single argv elements; use explicit `if` guards, not `&&` one-liners under
+  `set -e`). Carbon ⇒ Modded tab automatically; `SteamServer Connected` log
+  line = Steam registration OK; master-list propagation takes a few minutes.
+  Live rename without restart: rcon `server.hostname "…"` + `server.writecfg`.
+
 ### OPEN: vac_decrypt timer failure on fresh cloud deploys
 
 Carbon logs `Timer of 60s has failed … (vac_decrypt)` for every server-local
