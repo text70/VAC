@@ -106,7 +106,7 @@ are unaffected. Next step: run `test-harness` against the exact staged
 
 | Host | Access | Notes |
 |------|--------|-------|
-| LAN box (owner-Macmini5-2) | `ssh owner@10.0.0.6` | Test box; reusable prebuilt artifacts in `/opt/vacbuild` (`libvac_integrity.so`, `vac-daemon`, PQC keys, `VacIntegrity.cs` — point `VAC_BUILD_DIR` there to skip the build), old repo clone at `/opt/vac-integrity`. No containers running by default. |
+| LAN box (owner-Macmini5-2) | `ssh owner@10.0.0.6` | Test box; podman 4.9.3, 8 GB RAM, 573 G free. sudo **requires a password** (no non-interactive root from ssh — owner must run privileged commands themselves). Working legacy stack at `/opt/vac-rustdata` (full game + Carbon + `vac-tokens.db`); reusable prebuilt artifacts in `/opt/vacbuild` (`libvac_integrity.so`, `vac-daemon`, PQC keys, `VacIntegrity.cs` — point `VAC_BUILD_DIR` there to skip the build), old repo clone at `/opt/vac-integrity`. No containers running by default. **Pending:** deploy-didstopia.sh one-liner re-validation on this box (cloud-validated script should be re-run here with `VAC_BUILD_DIR=/opt/vacbuild`). |
 | AWS "Rust" (`i-0b093c0f1a8908942`, us-east-1) | `ssh -i ~/networking/rust.pem ubuntu@18.212.143.27` | t3.medium (4 GB → `WORLDSIZE=1000` only), Ubuntu 26.04, podman 5.7.0. Keypair `rust` (matches `~/networking/rust.pem`; SSH user is `ubuntu`, **not** `ec2-user`). SG `sg-0d938c41d74c9c113`: 28015/udp, 28016 tcp+udp, 28082/28084/28085 tcp, 22. Volume `/root/vac-rustdata`, artifacts `/root/vacbuild`, deploy log `~/deploy.log`. awscli is configured on the dev machine (verified via `aws sts get-caller-identity`). |
 
 Operator SteamID64 (owner/admin granted on deploys): `76561198080464011`.
@@ -485,6 +485,9 @@ avoid false positives from legal overlays.
   `{players:[{steamid,name,daemon_connected,enrolled}]}`) and
   `/vac/status.html` (auto-refreshing table, embeddable as a Carbon dashboard
   custom tab). Read-only — tokens/key material are never exposed.
+- **HTTP is plain http on 28085** (no TLS) — README/links must use `http://`.
+  Downloads (`/vac-daemon`, `/setup`) can reset mid-transfer while the
+  container is restarting; clients just retry.
 
 - Every function in original C port has a comment with its byte signature (e.g. `// 83 C8 FF 83 E9 00`).
 - Module structs are exact layout recreations from reverse engineering — do not reorder fields or change padding.

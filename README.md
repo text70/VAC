@@ -20,7 +20,11 @@ anti-cheat stack layered in, deployable on your own machine (LAN or private
 server). 
 
 **Requirements for the server**
-- **Host**: Debian/Ubuntu, Podman with internet connection
+- **Host**: Debian/Ubuntu (or derivative) with internet access; the script
+  installs Podman and all other dependencies for you
+- **Privileges**: run as root (`sudo`) — or unprivileged for a rootless deploy
+- **Disk**: ~20 GB free (game download + container image + build cache)
+- **RAM**: 4 GB minimum with the default `WORLDSIZE=1000`; 8 GB for large maps
 
 **What it provides**
 - **Base image**: [didstopia/rust-server](https://hub.docker.com/r/didstopia/rust-server) (bundled in the podman/docker image)
@@ -46,8 +50,15 @@ On a Debian/Ubuntu host with network access:
 ```bash
 # As root (recommended — rootful podman). Env vars go through `sudo env`:
 curl -sL https://raw.githubusercontent.com/text70/VAC/main/vac-server-integrity/deploy/deploy-didstopia.sh | \
-  sudo env ADMIN_STEAMID=<your-steamid64> SERVER_IP=<your-server-ip> WORLDSIZE=<1000-4500> bash
+  sudo env ADMIN_STEAMID=<your-steamid64> SERVER_IP=<your-server-ip> RCON_PASSWORD='<a-password>' bash
 ```
+
+- `ADMIN_STEAMID` — your SteamID64 (find it on your Steam profile URL); makes
+  you owner/admin in-game
+- `SERVER_IP` — the address players will use. On a LAN box it is auto-detected;
+  on a cloud VM always pass the **public** IP
+- `RCON_PASSWORD` — defaults to `vac-test`; set your own, it is exposed on
+  port 28016
 
 > Timings: ~12 min one-time cargo build of the plugin stack on slow servers,
 > then the first boot downloads the game via steamcmd (~5-15 min). Watch
@@ -208,7 +219,7 @@ sudo ufw allow 28084/tcp && sudo ufw allow 28085/tcp
 
 ```bash
 podman start rust-server                       # after reboot
-podman rm -f rust-server && <re-run script>    # rebuild; /root/vac-rustdata persists
+podman rm -f rust-server && <re-run script>    # rebuild; the data volume persists
 ```
 
 ## Clients
@@ -236,7 +247,6 @@ Games -> Add a Non-Steam Game to My Library -> Browse -> <path-to-your>SteamLibr
 
 ### Connecting in-game
 
-
 1. Start the game and reach the main menu.
 2. Press **F1** to open the in-game console.
 3. Type, substituting your server IP, and press Enter:
@@ -244,26 +254,39 @@ Games -> Add a Non-Steam Game to My Library -> Browse -> <path-to-your>SteamLibr
    connect <SERVER_IP>:28015
    ```
 4. You should load into the world. In the private chat you'll receive a
-   **VAC access code** (and a download link for the Windows client).
+   **VAC access code** (and a download link). The code is re-sent every time
+   you connect, so reconnecting is always safe.
+
+> **60-second grace window:** once you load in, the server expects your VAC
+> daemon to connect within 60 seconds — otherwise you are kicked (this is the
+> anti-cheat enforcement working). If you get kicked, finish the daemon setup
+> below, then reconnect; the daemon will keep you in.
 
 > The same server works for vanilla / EAC-enabled Windows clients too, but on
 > this EAC-off server the `-noeac` client is the intended pairing.
 
-If you can't get the daemon in next part running in 60 seconds the sever will kick you. 
-Go back to step 2. and rejoin the server. 
+### Installing & running the VAC daemon (Linux / Proton client)
 
-### Installing & running the VAC daemon (Linux client)
+**Tip:** download the daemon *before* joining the server — then you only need
+the access code from chat when you connect, and the 60-second window is easy
+to make.
 
-The vac-daemon binary is downloaded with the encrypted server signature from the Rust server.  
-  
-The magic launch link auto-detects your OS: a Windows browser gets the
-`vac-setup.zip` installer, a Linux/Proton User-Agent gets
-`vac-linux.zip` (the `vac-daemon` binary + a preload ini with your access
-code). Alternatively download the daemon directly into the directory of your choice:
+The daemon is served by the server itself over plain **http** (not https):
 
 ```bash
 wget http://<SERVER_IP>:28085/vac-daemon -O vac-daemon
 chmod +x vac-daemon
+```
+
+The magic launch link in chat auto-detects your OS: a Windows browser gets the
+`vac-setup.zip` installer, a Linux/Proton User-Agent gets `vac-linux.zip`
+(the `vac-daemon` binary + a preload ini with your access code baked in) —
+that variant saves you typing.
+
+Then join the server (F1 → `connect <SERVER_IP>:28015`), grab the code from
+chat, and start the daemon:
+
+```bash
 ./vac-daemon <SERVER_IP>:28084 <steamid64> <code-from-chat>
 ```
 
@@ -271,18 +294,20 @@ chmod +x vac-daemon
 - `<steamid64>` — your SteamID64
 - `<code-from-chat>` — the access code the plugin gave you in game
 
-On launch if the game is not connected, you will get a reject message, once connected this
-message should go change.  
+If the game isn't connected yet you'll get a reject message — it clears once
+you're in the world.
 
-Keep the daemon running in a terminal during gameplay (it auto-reconnects).   
+Keep the daemon running in a terminal during gameplay (it auto-reconnects).
 
-You can check your live status at:
-`http://<SERVER_IP>:28085/vac/status`
+Check your live status at: `http://<SERVER_IP>:28085/vac/status`
 
 > The command above downloads to your current directory (`vac-daemon`) and runs
 > it with `./vac-daemon`. If you save it elsewhere (e.g. `~/vac-daemon`), run it
 > with that path instead. Prefer the `vac-linux.zip` from your chat link, which
 > bakes in your server address and access code so you don't have to type them.
+>
+> If the download fails with a connection reset, the server was probably
+> restarting — wait a minute and retry.
 
 ### Installing & running the VAC daemon (Windows client)
 
@@ -302,7 +327,7 @@ Then:
 
 If you have `wget` installed (e.g. Git for Windows), this works too:
 ```powershell
-wget "http://<SERVER_IP>:28085/setup?t=<code-from-chat>" -o vac-setup.zip
+wget "http://<SERVER_IP>:28085/setup?t=<code-from-chat>" -O vac-setup.zip
 ```
 
 - `<SERVER_IP>` — the server's IP (e.g. `10.0.0.6`)
