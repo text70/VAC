@@ -44,11 +44,73 @@ cargo run -p test-listener -- 28084
 
 Supported on **Ubuntu 22.04+** and **Debian 12+**.
 
+**Current (blessed) deploy path: [`deploy/deploy-didstopia.sh`](deploy/deploy-didstopia.sh)**
+— boots the `didstopia/rust-server` image with Carbon + VacIntegrity in one
+shot, rootful (`sudo`) or rootless (plain user). See the repo-root README for
+the one-liner, env vars and cloud/firewall docs.
+
+`deploy.sh` (below) is the **legacy** flow: builds the custom
+`vac-test-server` image and runs it via `podman-compose`.
+
 ```bash
 curl -sL https://raw.githubusercontent.com/text70/VAC/refs/heads/main/vac-server-integrity/deploy/deploy.sh | sudo bash
 ```
 
 The script auto-detects root vs sudo and installs all dependencies.
+
+### deploy-didstopia.sh — troubleshooting (hard-won)
+
+Lessons from fresh-host deploys (LAN + AWS); keep these when touching the
+script:
+
+- **conmon "Failed to get working directory"** — real root cause:
+  `build_vacbuild()` `cd`s into the build tree and then `rm -rf`s it, leaving
+  the shell with a deleted cwd; podman/conmon's `getcwd()` then fails at run
+  time. Fixed by `cd /` before `rm -rf`. (Earlier fixes — pre-pull, chown,
+  `--workdir /`, file entrypoint — treated symptoms only; a fresh-host full
+  build always reproduced the error without the `cd /`.)
+- **steamcmd "Missing file permissions" (2025+ client)** — steamcmd refuses to
+  install as *real* root. Under rootful podman (sudo/cloud) `launch.sh`
+  detects rootful via `/proc/self/uid_map` (no userns mapping ⇒ real root) and
+  drops to the image's uid-1000 `docker` user with `setpriv` +
+  `HOME=/steamcmd` (HOME must be writable, or the client fails identically).
+  Rootless podman is unaffected: container root maps to the host user and
+  steamcmd accepts it (verified).
+- **didstopia image facts** — the game is NOT bundled (`/steamcmd/rust` is
+  empty in the image; first boot downloads ~5.9 GB via steamcmd, 5–15 min),
+  and its `/usr/local/bin/steamcmd` wrapper is broken (missing `linux32/`) —
+  use `/steamcmd/steamcmd.sh`.
+- **curl one-liner** pulls the script AND clones the repo from GitHub `main` —
+  local fixes only reach deploys after commit + push.
+- The bind source must exist before `podman run` (crun `statfs` failure
+  otherwise). Volume dir is `$VAC_DATA` (`/root/vac-rustdata` rootful,
+  `~/vac-rustdata` rootless); build cache in `$VAC_BUILD_DIR`
+  (`/root/vacbuild` / `~/vacbuild`).
+
+### OPEN: vac_decrypt timer failure on fresh cloud deploys
+
+Carbon logs `Timer of 60s has failed … (vac_decrypt)` for every server-local
+module scan (`AnalyzeScanResult`, VacIntegrity.cs:1063) on the AWS deploy,
+while the same stack works on the LAN box. Eliminated by process of
+experimentation: key format (sizes identical), key material (regenerated via
+`gen-keys`, restaged, still fails), native binary (pinned to the LAN-known-good
+`libvac_integrity.so`, still fails), plugin source (identical md5 both hosts).
+Remaining suspects: Carbon 2.0.257 timer/marshaling of `ref outDwords`, or
+`vac_scan` producing bogus constant-size payloads (12649 bytes for every
+module) inside the container. Impact: server-side scan verdicts only —
+connection, daemon auth (28084), enforcement flags and the 28085 HTTP surface
+are unaffected. Next step: run `test-harness` against the exact staged
+`.so` + keys locally to isolate native vs container environment.
+
+### Test hosts & deployment state
+
+| Host | Access | Notes |
+|------|--------|-------|
+| LAN box (owner-Macmini5-2) | `ssh owner@10.0.0.6` | Test box; reusable prebuilt artifacts in `/opt/vacbuild` (`libvac_integrity.so`, `vac-daemon`, PQC keys, `VacIntegrity.cs` — point `VAC_BUILD_DIR` there to skip the build), old repo clone at `/opt/vac-integrity`. No containers running by default. |
+| AWS "Rust" (`i-0b093c0f1a8908942`, us-east-1) | `ssh -i ~/networking/rust.pem ubuntu@18.212.143.27` | t3.medium (4 GB → `WORLDSIZE=1000` only), Ubuntu 26.04, podman 5.7.0. Keypair `rust` (matches `~/networking/rust.pem`; SSH user is `ubuntu`, **not** `ec2-user`). SG `sg-0d938c41d74c9c113`: 28015/udp, 28016 tcp+udp, 28082/28084/28085 tcp, 22. Volume `/root/vac-rustdata`, artifacts `/root/vacbuild`, deploy log `~/deploy.log`. awscli is configured on the dev machine (verified via `aws sts get-caller-identity`). |
+
+Operator SteamID64 (owner/admin granted on deploys): `76561198080464011`.
+RCON passwords are set per-deploy via `RCON_PASSWORD` — never commit them.
 
 ### Deploy flow
 
@@ -346,6 +408,7 @@ have shifted from "prove the system is clean" to "report available trust anchors
 - [x] Plugin-hosted HTTP download server on port 28085
 - [x] Bug fixes: buffer truncation, plugin symbol mismatch, container namespace, unsync'd static mut, OOM vectors, wire-length caps, unsigned overflow, unscored modules
 - [x] Kernel module loaded + ring-0 modules verified on host (361→113 procs after PF_KTHREAD filter; 0 hidden/missing; no idle_inject false positive)
+- [x] deploy-didstopia.sh: cloud-verified (AWS t3.medium, Ubuntu 26.04, rootful) + rootless steamcmd verified locally; fixes: deleted-cwd `cd /`, steamcmd-as-root uid-1000 drop, cargo autodiscovery, dual-mode volume paths
 
 ## Key Material
 

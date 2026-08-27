@@ -44,50 +44,57 @@ server).
 On a Debian/Ubuntu host with network access:
 
 ```bash
-# As root (recommended):
-curl -sL https://raw.githubusercontent.com/text70/VAC/main/vac-server-integrity/deploy/deploy-didstopia.sh | sudo bash
-
-# With an admin player + fixed IP + login:
+# As root (recommended — rootful podman):
 sudo curl -sL https://raw.githubusercontent.com/text70/VAC/main/vac-server-integrity/deploy/deploy-didstopia.sh | \
   ADMIN_STEAMID=<your-steamid64> SERVER_IP=<your-server-ip> WORLDSIZE=<1000-4500> bash
 ```
 
+> Timings: ~12 min one-time cargo build of the plugin stack on slow servers,
+> then the first boot downloads the game via steamcmd (~5-15 min). Watch
+> `podman logs -f rust-server` until `Server startup complete`.
+>
+> The script also works **rootless** (run without `sudo`): the data volume
+> then lives in `~/vac-rustdata` instead of `/root/vac-rustdata`.
 
 ### Podman launch (equivalent)
 
+The deploy script writes `launch.sh` into the data volume (installs the game
+via steamcmd on first boot, loads Carbon/Doorstop, and drops to the image's
+uid-1000 `docker` user when running under rootful podman) and starts:
+
 ```bash
 podman run -d --name rust-server \
-  -e RUST_SERVER_WORLDSIZE=1000 -e RUST_SERVER_PORT=28015 -e RUST_SERVER_QUERYPORT=28016 \
-  -e RUST_RCON_PASSWORD=secret \
-  -v /opt/vac-rustdata:/steamcmd/rust \
+  -e WORLDSIZE=1000 -e VAC_SEED=<seed> \
+  -e EXTRA_ARGS="+server.anticheattoken 0 +server.strictauth_eac 0 +server.authtimeout 3600 +server.encryption 0" \
+  -e RCON_PASSWORD=secret -e VAC_PUBLIC_IP=<your-server-ip> \
+  -v /root/vac-rustdata:/steamcmd/rust \
   -p 28015:28015/udp -p 28016:28016/tcp -p 28016:28016/udp \
   -p 28082:28082/tcp -p 28084:28084/tcp -p 28085:28085/tcp \
-  --entrypoint /bin/bash didstopia/rust-server:latest -c "
-    cd /steamcmd/rust
-    source ./carbon/tools/environment.sh
-    export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH:/steamcmd/rust/carbon/native
-    exec ./RustDedicated -batchmode -load -nographics \
-      +server.port 28015 +server.queryport 28016 +server.identity docker \
-      +server.worldsize 1000 +server.seed 12345 +server.maxplayers 50 \
-      +server.anticheattoken 0 +server.strictauth_eac 0 \
-      +server.authtimeout 3600 +server.encryption 0 \
-      +rcon.port 28016 +rcon.password host +rcon.web 1 \
-      +app.port 28082 -logfile /dev/stdout"
+  --workdir / \
+  --entrypoint /steamcmd/rust/launch.sh \
+  docker.io/didstopia/rust-server:latest
 ```
+
+> The volume must already contain `launch.sh`, the Carbon tree and the staged
+> VacIntegrity artifacts — run the deploy script once instead of hand-rolling
+> this command.
 
 
 ## Verify healthy
 
 ```bash
-podman logs -f rust-server        # wait for "Server startup complete"
+podman logs -f rust-server        # first boot: steamcmd install (~5-15 min), then "Server startup complete"
 ss -lunp | grep 28016             # query port should LISTEN
+curl -s http://127.0.0.1:28085/vac/status   # VAC plugin status (JSON)
 ```
 
 ## Deployment & environment variables
 
 The same `deploy-didstopia.sh` runs on a LAN box **or** any Debian/Ubuntu cloud VM
-(Hetzner, DigitalOcean, AWS, …). Everything is configured through environment
-variables on the deploy command line.
+(Hetzner, DigitalOcean, AWS, …), rootful (`sudo`) or rootless (plain user).
+Everything is configured through environment variables on the deploy command
+line. Data lives in `/root/vac-rustdata` (rootful) or `~/vac-rustdata`
+(rootless); the VacIntegrity build cache lands next to it in `vacbuild`.
 
 ### Environment variables
 
@@ -100,7 +107,8 @@ variables on the deploy command line.
 | `ADMIN_STEAMID` | unset | operator SteamID64 → owner/admin + SelectiveEAC bypass |
 | `RCON_PASSWORD` | `vac-test` | RCON password — **change it** (exposed on 28016) |
 | `ENABLE_CARBON` | `1` | install Carbon (0 = vanilla) |
-| `VAC_BUILD_DIR` | unset | host dir with prebuilt `libvac_integrity.so` + `vac-daemon` to stage |
+| `VAC_DATA` | `/root/vac-rustdata` or `~/vac-rustdata` | host dir bound to `/steamcmd/rust` (game, saves, Carbon, keys) |
+| `VAC_BUILD_DIR` | `/root/vacbuild` or `~/vacbuild` | host dir with prebuilt `libvac_integrity.so` + `vac-daemon` to stage (skips the build if complete) |
 | `VAC_EXTRA_ARGS` | unset | extra `+cvar value ...` game args appended at launch |
 
 Example (LAN):
@@ -200,7 +208,7 @@ sudo ufw allow 28084/tcp && sudo ufw allow 28085/tcp
 
 ```bash
 podman start rust-server                       # after reboot
-podman rm -f rust-server && <re-run script>    # rebuild; /opt/vac-rustdata persists
+podman rm -f rust-server && <re-run script>    # rebuild; /root/vac-rustdata persists
 ```
 
 ## Clients

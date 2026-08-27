@@ -22,17 +22,27 @@ ADMIN_STEAMID="${ADMIN_STEAMID:-}"
 WORLDSIZE="${WORLDSIZE:-1000}"
 RCON_PASSWORD="${RCON_PASSWORD:-vac-test}"
 ENABLE_CARBON="${ENABLE_CARBON:-1}"
+# Data volume + artifact dirs follow the podman mode: rootful runs (sudo,
+# cloud) keep everything under /root; rootless runs (plain user, LAN) use
+# $HOME so the invoking user owns the volume.
+if [ "$(id -u)" = "0" ]; then
+  VAC_DATA="${VAC_DATA:-/root/vac-rustdata}"
+  VAC_BUILD_DIR="${VAC_BUILD_DIR:-/root/vacbuild}"
+else
+  VAC_DATA="${VAC_DATA:-$HOME/vac-rustdata}"
+  VAC_BUILD_DIR="${VAC_BUILD_DIR:-$HOME/vacbuild}"
+fi
 # Map seed: random-but-persistent. If VAC_SEED is set, use it. Otherwise reuse
 # the previously generated seed (kept in the volume) so redeploys/restarts
 # don't reshape the world; on a fresh volume a random seed is generated.
-SEED_FILE="/opt/vac-rustdata/.seed"
+SEED_FILE="$VAC_DATA/.seed"
 VAC_SEED="${VAC_SEED:-}"
 if [ -z "$VAC_SEED" ] && [ -f "$SEED_FILE" ]; then
   VAC_SEED="$(cat "$SEED_FILE")"
 fi
 if [ -z "$VAC_SEED" ]; then
   VAC_SEED="$(( RANDOM * 32768 + RANDOM ))1467"  # arbitrary large int
-  mkdir -p /opt/vac-rustdata
+  mkdir -p "$VAC_DATA"
   printf '%s' "$VAC_SEED" > "$SEED_FILE"
   echo "  Generated random map seed: $VAC_SEED (persisted)"
 else
@@ -65,21 +75,19 @@ fi
 echo "  Server IP: $SERVER_IP"
 
 # --- 3. storage volume ---------------------------------------------------
-# Ensure the volume dir exists and is writable by the current user. On a fresh
-# host /opt is root-owned; if a previous root run created the dir, the current
-# (possibly non-root) user must either own it or write via group.
-mkdir -p /opt/vac-rustdata/carbon/native
-if [ -w /opt/vac-rustdata ]; then
+# Ensure the volume dir exists and is writable by the current user.
+mkdir -p "$VAC_DATA/carbon/native"
+if [ -w "$VAC_DATA" ]; then
   : # already writable
 elif [ "$(id -u)" = "0" ]; then
-  chown "$(id -u):$(id -g)" /opt/vac-rustdata 2>/dev/null || true
+  chown "$(id -u):$(id -g)" "$VAC_DATA" 2>/dev/null || true
 else
-  echo "  WARNING: /opt/vac-rustdata is not writable by $USER; trying group write..."
-  chmod g+w /opt/vac-rustdata 2>/dev/null || true
+  echo "  WARNING: $VAC_DATA is not writable by $USER; trying group write..."
+  chmod g+w "$VAC_DATA" 2>/dev/null || true
 fi
 # Ensure it's actually writable before continuing.
-if [ ! -w /opt/vac-rustdata ]; then
-  echo "ERROR: cannot write to /opt/vac-rustdata. Re-run as root, or: sudo chown -R \$(whoami):\$(whoami) /opt/vac-rustdata"
+if [ ! -w "$VAC_DATA" ]; then
+  echo "ERROR: cannot write to $VAC_DATA. Re-run as root, or: sudo chown -R \$(whoami):\$(whoami) $VAC_DATA"
   exit 1
 fi
 
@@ -91,7 +99,6 @@ fi
 # needed. Artifacts expected in VAC_BUILD_DIR:
 #   libvac_integrity.so  kyber_public.der  kyber_secret.der
 #   mldsa65_public.der   mldsa65_secret.der  vac-daemon  VacIntegrity.cs
-VAC_BUILD_DIR="${VAC_BUILD_DIR:-/opt/vacbuild}"
 
 build_vacbuild() {
   local need=0
@@ -103,24 +110,39 @@ build_vacbuild() {
 
   echo "  Building VacIntegrity artifacts in ${VAC_BUILD_DIR} (one-time)..."
   mkdir -p "$VAC_BUILD_DIR"
-  local BUILD_SRC="/opt/vacbuild-src"
+  local BUILD_SRC="${VAC_BUILD_DIR}-src"
   rm -rf "$BUILD_SRC"
   git clone -q --depth 1 https://github.com/text70/VAC.git "$BUILD_SRC" || { echo "ERROR: repo clone failed"; exit 1; }
   cd "$BUILD_SRC/vac-server-integrity"
 
-  # Rust toolchain (only needed for this build)
-  if ! command -v rustc >/dev/null; then
+  # Rust toolchain (only needed for this build). Find cargo wherever it lives
+  # (PATH, CARGO_HOME, root's or the invoking user's rustup install) and only
+  # install rustup when nothing usable exists — so `curl | sudo bash` works
+  # even when the user's toolchain is in $SUDO_USER's home.
+  cargo_ok() { command -v cargo >/dev/null && command -v rustc >/dev/null; }
+  if ! cargo_ok; then
+    local ch
+    for ch in "${CARGO_HOME:-}" "$HOME/.cargo" "/root/.cargo" \
+              "$(getent passwd "${SUDO_USER:-}" 2>/dev/null | cut -d: -f6)/.cargo" \
+              "/usr/local/cargo" "/opt/cargo"; do
+      if [ -n "$ch" ] && [ -x "$ch/bin/cargo" ]; then
+        export CARGO_HOME="$ch"
+        export RUSTUP_HOME="${RUSTUP_HOME:-$(dirname "$ch")/.rustup}"
+        export PATH="$ch/bin:$PATH"
+        break
+      fi
+    done
+  fi
+  if ! cargo_ok; then
     echo "    Installing Rust (rustup)..."
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+    export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+    export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+    export PATH="$CARGO_HOME/bin:$PATH"
+    # shellcheck disable=SC1091
+    [ -f "$CARGO_HOME/env" ] && . "$CARGO_HOME/env"
   fi
-  # Ensure cargo/rustc are on PATH. rustup installs to $CARGO_HOME (default
-  # ~/.cargo); source its env if present, else fall back to common paths.
-  if [ -f "${CARGO_HOME:-$HOME/.cargo}/env" ]; then
-    # shellcheck disable=SC1090
-    . "${CARGO_HOME:-$HOME/.cargo}/env"
-  fi
-  export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
-  command -v cargo >/dev/null || { echo "ERROR: cargo not found after rustup install"; exit 1; }
+  cargo_ok || { echo "ERROR: cargo/rustc not found after rustup install (CARGO_HOME=${CARGO_HOME:-unset})"; exit 1; }
 
   echo "    cargo build (libvac_integrity.so, vac-daemon, gen-keys)..."
   cargo build --release -p vac-integrity -p vac-daemon -p gen-keys 2>&1 | tail -3 || { echo "ERROR: cargo build failed"; exit 1; }
@@ -133,7 +155,11 @@ build_vacbuild() {
   cp -f target/release/vac-daemon          "$VAC_BUILD_DIR/" || exit 1
   cp -f vac-plugin/VacIntegrity.cs         "$VAC_BUILD_DIR/" || exit 1
 
-  # Free space: drop the transient build tree (4GB cloud hosts are tight)
+  # Free space: drop the transient build tree (4GB cloud hosts are tight).
+  # MUST leave the deleted cwd first: getcwd() fails for the rest of this
+  # shell (and conmon) if we rm -rf the tree we are cd'd into, which surfaces
+  # later as podman's "[conmon:e] Failed to get working directory".
+  cd /
   rm -rf "$BUILD_SRC"
   # gen-keys writes 600 on secrets already; ensure readable
   chmod -R a+r "$VAC_BUILD_DIR" 2>/dev/null || true
@@ -145,8 +171,8 @@ build_vacbuild
 stage_native() {          # stage_native <dest_subdir> <name>
   local dest="$1" name="$2"
   if [ -f "${VAC_BUILD_DIR}/${name}" ]; then
-    mkdir -p "/opt/vac-rustdata/carbon/${dest}"
-    cp "${VAC_BUILD_DIR}/${name}" "/opt/vac-rustdata/carbon/${dest}/${name}"
+    mkdir -p "$VAC_DATA/carbon/${dest}"
+    cp "${VAC_BUILD_DIR}/${name}" "$VAC_DATA/carbon/${dest}/${name}"
     echo "  Staged ${name}"
   else
     echo "  WARN: missing ${VAC_BUILD_DIR}/${name}"
@@ -162,11 +188,11 @@ stage_native plugins VacIntegrity.cs
 
 # --- 4. Carbon (optional) ------------------------------------------------
 if [ "$ENABLE_CARBON" = "1" ]; then
-  CARBON_TGZ="/opt/vac-rustdata/carbon.tar.gz"
-  if [ ! -d /opt/vac-rustdata/carbon/tools ]; then
+  CARBON_TGZ="$VAC_DATA/carbon.tar.gz"
+  if [ ! -d "$VAC_DATA/carbon/tools" ]; then
     echo "Installing Carbon..."
     wget -q https://github.com/CarbonCommunity/Carbon/releases/download/production_build/Carbon.Linux.Release.tar.gz -O "$CARBON_TGZ"
-    tar -xzf "$CARBON_TGZ" -C /opt/vac-rustdata
+    tar -xzf "$CARBON_TGZ" -C "$VAC_DATA"
     rm -f "$CARBON_TGZ"
   fi
 fi
@@ -187,17 +213,14 @@ podman system prune -f >/dev/null 2>&1 || true
 # Ensure conmon's runtime dir exists and is writable (rootful podman).
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 mkdir -p /run/containers "$XDG_RUNTIME_DIR" 2>/dev/null || true
-# Pre-create + own the mount host dir. If running as root, chown to the
-# podman user so a rootless conmon can traverse it (fixes
-# "[conmon:e] Failed to get working directory" on fresh hosts where an earlier
-# root run left a root-owned /opt/vac-rustdata).
-mkdir -p /opt/vac-rustdata
-if [ "$(id -u)" = "0" ] && command -v podman >/dev/null; then
-  # Use the invoking user's UID if under sudo, else root.
-  PM_USER="${SUDO_USER:-root}"
-  if [ "$PM_USER" != "root" ]; then
-    chown -R "$PM_USER" /opt/vac-rustdata 2>/dev/null || true
-  fi
+# Pre-create + own the mount host dir (must exist before podman run).
+mkdir -p "$VAC_DATA"
+# shellcheck disable=SC2015  # (used below)
+PM_USER="${SUDO_USER:-$(id -un)}"
+if [ "$(id -u)" = "0" ] && [ "$PM_USER" != "root" ]; then
+  # Rootful podman: the volume is consumed by the image's uid-1000 'docker'
+  # user (launch.sh drops to it for steamcmd) — keep it group/other usable.
+  chown 1000:1000 "$VAC_DATA" 2>/dev/null || true
 fi
 # Pre-pull so podman run doesn't race image-pull + conmon cwd creation.
 podman pull -q docker.io/didstopia/rust-server:latest >/dev/null 2>&1 || echo "  (podman pull skipped; will pull on run)"
@@ -208,13 +231,27 @@ podman pull -q docker.io/didstopia/rust-server:latest >/dev/null 2>&1 || echo " 
 # A real script file avoids the "[conmon:e] Failed to get working directory"
 # error that a long inline `-c` here-string triggers on podman 5.x. Inlined
 # here so the `curl | bash` one-liner works without a sibling file.
-cat > /opt/vac-rustdata/launch.sh <<'LAUNCH'
+cat > "$VAC_DATA/launch.sh" <<'LAUNCH'
 #!/bin/bash
 set -euo pipefail
 cd /steamcmd/rust
+# Rootful podman (sudo / cloud) runs the container as REAL root; the 2025+
+# steamcmd client refuses to install as real root ("Missing file
+# permissions"). Detect rootful via /proc/self/uid_map (no userns mapping
+# means real root) and drop to uid 1000 (the image's 'docker' user, owner
+# of /steamcmd) with a writable HOME. Under rootless podman the container
+# root maps to the host user, which steamcmd accepts — run as-is.
+if [ "$(awk '$1==0{print $2}' /proc/self/uid_map)" = "0" ]; then
+  chown -R 1000:1000 /steamcmd/rust 2>/dev/null || true
+  set -- setpriv --reuid 1000 --regid 1000 --clear-groups env HOME=/steamcmd
+else
+  set -- env HOME=/steamcmd
+fi
 if [ ! -x ./RustDedicated ]; then
   echo "[launch] Installing RustDedicated via steamcmd (first boot ~5-15 min)..."
-  steamcmd +force_install_dir /steamcmd/rust +login anonymous \
+  # NOTE: the image's /usr/local/bin/steamcmd wrapper is broken (its linux32/
+  # dir is missing) — use the bundled /steamcmd/steamcmd.sh instead.
+  "$@" /steamcmd/steamcmd.sh +force_install_dir /steamcmd/rust +login anonymous \
     +app_update 258550 validate +quit 2>&1 | tail -5
 fi
 if [ ! -x ./RustDedicated ]; then
@@ -224,7 +261,7 @@ fi
 # shellcheck disable=SC1091
 source ./carbon/tools/environment.sh || true
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/steamcmd/rust/carbon/native"
-exec ./RustDedicated -batchmode -load -nographics \
+exec "$@" ./RustDedicated -batchmode -load -nographics \
   +server.port 28015 +server.queryport 28016 +server.identity docker \
   +server.worldsize "$WORLDSIZE" +server.seed "$VAC_SEED" \
   +server.hostname "VAC Server" +server.maxplayers 50 \
@@ -232,7 +269,15 @@ exec ./RustDedicated -batchmode -load -nographics \
   +rcon.port 28016 +rcon.password "$RCON_PASSWORD" +rcon.web 1 \
   +app.port 28082 -logfile /dev/stdout
 LAUNCH
-chmod +x /opt/vac-rustdata/launch.sh
+chmod +x "$VAC_DATA/launch.sh"
+# The bind source MUST exist before podman run — crun fails with
+# "Error: statfs <volume>: no such file or directory" otherwise.
+mkdir -p "$VAC_DATA"
+if [ ! -d "$VAC_DATA" ]; then
+  echo "ERROR: $VAC_DATA missing at run time — cannot launch"
+  exit 1
+fi
+ls -ld "$VAC_DATA"
 podman run -d --name rust-server \
   -e WORLDSIZE="$WORLDSIZE" \
   -e VAC_SEED="$VAC_SEED" \
@@ -241,9 +286,10 @@ podman run -d --name rust-server \
   -e RUST_SERVER_PORT=28015 \
   -e RUST_SERVER_QUERYPORT=28016 \
   -e VAC_PUBLIC_IP="$SERVER_IP" \
-  -v /opt/vac-rustdata:/steamcmd/rust:z \
+  -v "$VAC_DATA:/steamcmd/rust" \
   -p 28015:28015/udp -p 28016:28016/tcp -p 28016:28016/udp \
   -p 28082:28082/tcp -p 28084:28084/tcp -p 28085:28085/tcp \
+  --workdir / \
   --entrypoint /steamcmd/rust/launch.sh \
   docker.io/didstopia/rust-server:latest
 

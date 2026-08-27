@@ -1,5 +1,12 @@
 # Deployment
 
+> **Current:** [`deploy-didstopia.sh`](deploy-didstopia.sh) is the blessed
+> deployment path — boots the `didstopia/rust-server` image with Carbon +
+> VacIntegrity in one shot (rootful or rootless). See the repo-root README
+> for the one-liner, env vars, cloud (AWS) firewall setup and client guide.
+>
+> The `deploy.sh` flow below is the **legacy** custom-image build.
+
 To deploy the VAC Integrity server, run one of these commands on your host:
 
 ```bash
