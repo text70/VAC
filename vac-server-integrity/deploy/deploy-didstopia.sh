@@ -180,6 +180,13 @@ fi
 
 # --- 6. run -------------------------------------------------------------
 podman rm -f rust-server 2>/dev/null || true
+# Free container storage: stale images/containers from aborted runs can fill
+# /var/lib/containers/storage, which makes conmon fail with
+# "[conmon:e] Failed to get working directory".
+podman system prune -f >/dev/null 2>&1 || true
+# Ensure conmon's runtime dir exists and is writable (rootful podman).
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+mkdir -p /run/containers "$XDG_RUNTIME_DIR" 2>/dev/null || true
 # Pre-create + own the mount host dir. If running as root, chown to the
 # podman user so a rootless conmon can traverse it (fixes
 # "[conmon:e] Failed to get working directory" on fresh hosts where an earlier
@@ -211,6 +218,20 @@ podman run -d --name rust-server --workdir / \
   --entrypoint /bin/bash \
   docker.io/didstopia/rust-server:latest -c "
     cd /steamcmd/rust
+
+    # Install / update the RustDedicated game into this volume if missing.
+    # didstopia's stock start.sh normally does this; our entrypoint override
+    # must replicate it or ./RustDedicated won't exist on a fresh host.
+    if [ ! -x ./RustDedicated ]; then
+      echo '  [deploy] Installing RustDedicated via steamcmd (first boot ~5-15 min)...'
+      steamcmd +force_install_dir /steamcmd/rust +login anonymous \
+        +app_update 258550 validate +quit 2>&1 | tail -5
+    fi
+    if [ ! -x ./RustDedicated ]; then
+      echo 'ERROR: RustDedicated still missing after install'
+      exit 1
+    fi
+
     source ./carbon/tools/environment.sh
     export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH:/steamcmd/rust/carbon/native
     exec ./RustDedicated -batchmode -load -nographics \
