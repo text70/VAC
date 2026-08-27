@@ -205,7 +205,7 @@ podman run -d --name rust-server --workdir / \
   -e RUST_SERVER_PORT=28015 \
   -e RUST_SERVER_QUERYPORT=28016 \
   -e VAC_PUBLIC_IP="$SERVER_IP" \
-  -v /opt/vac-rustdata:/steamcmd/rust \
+  -v /opt/vac-rustdata:/steamcmd/rust:z \
   -p 28015:28015/udp -p 28016:28016/tcp -p 28016:28016/udp \
   -p 28082:28082/tcp -p 28084:28084/tcp -p 28085:28085/tcp \
   --entrypoint /bin/bash \
