@@ -409,6 +409,7 @@ have shifted from "prove the system is clean" to "report available trust anchors
 - [x] Bug fixes: buffer truncation, plugin symbol mismatch, container namespace, unsync'd static mut, OOM vectors, wire-length caps, unsigned overflow, unscored modules
 - [x] Kernel module loaded + ring-0 modules verified on host (361→113 procs after PF_KTHREAD filter; 0 hidden/missing; no idle_inject false positive)
 - [x] deploy-didstopia.sh: cloud-verified (AWS t3.medium, Ubuntu 26.04, rootful) + rootless steamcmd verified locally; fixes: deleted-cwd `cd /`, steamcmd-as-root uid-1000 drop, cargo autodiscovery, dual-mode volume paths
+- [x] curl one-liner validated end-to-end on AWS (fetch from GitHub main → rootful deploy → boots from save; artifacts/Carbon reused via `vacbuild` fast path). Note: env vars must ride through `sudo env` — plain `sudo curl | bash` runs the script unprivileged.
 
 ## Key Material
 

@@ -23,6 +23,10 @@ fn main() {
     let out_dir = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
     let out_path = Path::new(&out_dir);
 
+    // Create the output directory if missing (deploy scripts pipe this into
+    // fresh paths; a missing dir used to panic at the first fs::write).
+    fs::create_dir_all(out_path).expect("create output dir");
+
     println!("Generating PQC key material in: {}", out_path.display());
 
     // ML-KEM-768 (Kyber) keypair

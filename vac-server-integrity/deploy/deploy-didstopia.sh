@@ -10,7 +10,10 @@
 #
 # Usage:
 #   curl -sL https://raw.githubusercontent.com/text70/VAC/main/\
-#     vac-server-integrity/deploy/deploy-didstopia.sh | sudo bash
+#     vac-server-integrity/deploy/deploy-didstopia.sh | \
+#     sudo env ADMIN_STEAMID=<steamid64> SERVER_IP=<ip> bash
+# (env vars must ride through `sudo env` — `sudo curl | bash` would run the
+#  script unprivileged and only elevate the fetch.)
 #
 # Env overrides (before/exporting): SERVER_IP, WORLDSIZE, ADMIN_STEAMID (you),
 # RCON_PASSWORD, ENABLE_CARBON (0/1, default 1)
@@ -41,7 +44,10 @@ if [ -z "$VAC_SEED" ] && [ -f "$SEED_FILE" ]; then
   VAC_SEED="$(cat "$SEED_FILE")"
 fi
 if [ -z "$VAC_SEED" ]; then
-  VAC_SEED="$(( RANDOM * 32768 + RANDOM ))1467"  # arbitrary large int
+  # Valid uint32 seed (1..2^31-1). Note: do NOT string-append digits here —
+  # a >2^31 value gets clamped to INT32_MAX by the engine, collapsing all
+  # "random" seeds to the same world.
+  VAC_SEED="$(( RANDOM * 32768 + RANDOM + 1 ))"
   mkdir -p "$VAC_DATA"
   printf '%s' "$VAC_SEED" > "$SEED_FILE"
   echo "  Generated random map seed: $VAC_SEED (persisted)"

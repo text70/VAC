@@ -44,9 +44,9 @@ server).
 On a Debian/Ubuntu host with network access:
 
 ```bash
-# As root (recommended — rootful podman):
-sudo curl -sL https://raw.githubusercontent.com/text70/VAC/main/vac-server-integrity/deploy/deploy-didstopia.sh | \
-  ADMIN_STEAMID=<your-steamid64> SERVER_IP=<your-server-ip> WORLDSIZE=<1000-4500> bash
+# As root (recommended — rootful podman). Env vars go through `sudo env`:
+curl -sL https://raw.githubusercontent.com/text70/VAC/main/vac-server-integrity/deploy/deploy-didstopia.sh | \
+  sudo env ADMIN_STEAMID=<your-steamid64> SERVER_IP=<your-server-ip> WORLDSIZE=<1000-4500> bash
 ```
 
 > Timings: ~12 min one-time cargo build of the plugin stack on slow servers,
@@ -114,8 +114,8 @@ line. Data lives in `/root/vac-rustdata` (rootful) or `~/vac-rustdata`
 Example (LAN):
 
 ```bash
-sudo curl -sL https://raw.githubusercontent.com/text70/VAC/main/vac-server-integrity/deploy/deploy-didstopia.sh | \
-  ADMIN_STEAMID=<your-steamid64> bash
+curl -sL https://raw.githubusercontent.com/text70/VAC/main/vac-server-integrity/deploy/deploy-didstopia.sh | \
+  sudo env ADMIN_STEAMID=<your-steamid64> bash
 ```
 
 > Tip: `VAC_PUBLIC_IP` is the only var the plugin reads directly; `WORLDSIZE`,
@@ -129,11 +129,11 @@ Hosting on a cloud VPS only differs from a LAN box in two ways:
    *private* address, which players can't reach. Always pass `SERVER_IP`.
 
 ```bash
-sudo curl -sL https://raw.githubusercontent.com/text70/VAC/main/vac-server-integrity/deploy/deploy-didstopia.sh | \
-  SERVER_IP=<your-cloud-public-ip> \
-  ADMIN_STEAMID=<your-steamid64> \
-  RCON_PASSWORD='<strong-password>' \
-  bash
+curl -sL https://raw.githubusercontent.com/text70/VAC/main/vac-server-integrity/deploy/deploy-didstopia.sh | \
+  sudo env SERVER_IP=<your-cloud-public-ip> \
+    ADMIN_STEAMID=<your-steamid64> \
+    RCON_PASSWORD='<strong-password>' \
+    bash
 ```
 
 2. **Open the ports** in your provider's firewall / security group:
