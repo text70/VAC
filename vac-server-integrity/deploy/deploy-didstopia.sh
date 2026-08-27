@@ -305,10 +305,14 @@ echo "=== Done. Join at:  connect $SERVER_IP:28015 ==="
 if [ -n "$ADMIN_STEAMID" ]; then
   echo "Granting admin/moderator + SelectiveEAC bypass for $ADMIN_STEAMID ..."
   # The setup operator is registered as an admin/operator so they can use
-  # the Carbon admin panel (/cpanel, no leading slash). Best-effort right
+  # the Carbon admin panel (cpanel, no leading slash). Best-effort right
   # after start; re-run post 'Server startup complete' if it didn't persist.
-  # player is created/joined here too as a baseline group applied to all players.
+  # NOTE: cpanel checks the NATIVE auth level (users.cfg), not oxide groups —
+  # authLevel is single-valued and last-write-wins, so ownerid (2) must come
+  # AFTER moderatorid (1). Oxide groups cover plugin-side checks.
   grant() { podman exec rust-server rcon "$1" >/dev/null 2>&1 || true; }
+  grant "moderatorid $ADMIN_STEAMID VAC-operator"
+  grant "ownerid $ADMIN_STEAMID VAC-operator"
   grant "oxide.usergroup add $ADMIN_STEAMID admin"
   grant "oxide.usergroup add $ADMIN_STEAMID moderator"
   grant "c.grant user $ADMIN_STEAMID selectiveeac.use"

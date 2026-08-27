@@ -87,6 +87,18 @@ script:
   `~/vac-rustdata` rootless); build cache in `$VAC_BUILD_DIR`
   (`/root/vacbuild` / `~/vacbuild`).
 
+- **cpanel "auth level not high enough"** — Carbon's admin panel checks the
+  NATIVE Rust auth level (`ownerid`/`moderatorid` → `users.cfg`), NOT oxide
+  group membership. Grant both oxide groups *and* native auth; `authLevel` is
+  single-valued and last-write-wins — run `ownerid` (2) **after**
+  `moderatorid` (1). Applies on next (re)connect.
+- **The image's `rcon` client authenticates with `RUST_RCON_PASSWORD`** — the
+  deploy script now passes `-e RUST_RCON_PASSWORD="$RCON_PASSWORD"` alongside
+  the game's `+rcon.password`. Without it, every rcon-based grant fails
+  silently (`RconApp::Command relayed` + server logs
+  `RCON: 127.0.0.1 attempted to connect with incorrect password`). When
+  debugging grants, check that counter first.
+
 ### OPEN: vac_decrypt timer failure on fresh cloud deploys
 
 Carbon logs `Timer of 60s has failed … (vac_decrypt)` for every server-local
