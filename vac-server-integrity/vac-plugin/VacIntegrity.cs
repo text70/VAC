@@ -109,9 +109,12 @@ namespace Carbon.Plugins
         // Daemon connections idle between scan rounds and can blip on reconnect;
         // require the daemon to be absent this long before kicking.
         private const int DisconnectToleranceSeconds = 30;
+        // Warn once when this many seconds of the grace window remain.
+        private const int GraceWarningSeconds = 30;
         private const int DownloadPort = 28085;
         private readonly Dictionary<ulong, DateTime> _playerConnectTime = new Dictionary<ulong, DateTime>();
         private readonly Dictionary<ulong, DateTime> _lastDaemonSeen = new Dictionary<ulong, DateTime>();
+        private readonly HashSet<ulong> _graceWarned = new HashSet<ulong>();
 
         // HTTP download server hardening
         private const int HttpMaxConcurrent = 16;
@@ -850,6 +853,7 @@ namespace Carbon.Plugins
                 if (connected == 1)
                 {
                     _lastDaemonSeen[steamId] = DateTime.UtcNow;
+                    _graceWarned.Remove(steamId);
                     continue;
                 }
 
@@ -858,18 +862,70 @@ namespace Carbon.Plugins
                 bool absentLongEnough = !everSeen ||
                     (DateTime.UtcNow - lastSeen).TotalSeconds >= DisconnectToleranceSeconds;
 
+                BasePlayer player = BasePlayer.FindByID(steamId);
+                if (player == null || !player.IsConnected)
+                    continue;
+
+                // Half-grace warning: nudge once per connect while the daemon
+                // is still missing so the kick doesn't come as a surprise.
+                double remaining = GraceSeconds - (DateTime.UtcNow - connectedAt).TotalSeconds;
+                if (!absentLongEnough && remaining <= GraceWarningSeconds &&
+                    _graceWarned.Add(steamId))
+                {
+                    player.ChatMessage("VAC: daemon not connected — " + (int)remaining +
+                        "s left before kick. Press F1: your access code is in the console.");
+                    string warnTok = EnsureToken(lo, hi);
+                    if (warnTok != null)
+                        SendTokenConsole(player, steamId, warnTok);
+                }
+
                 if (absentLongEnough)
                 {
-                    BasePlayer player = BasePlayer.FindByID(steamId);
-                    if (player != null && player.IsConnected)
-                    {
-                        string serverIp = GetServerIp();
-                        string url = $"http://{serverIp}:{DownloadPort}/";
-                        player.Kick("VAC client required. Download and install from: " + url);
-                        Puts("VacIntegrity: Kicked " + player.displayName +
-                            " (no daemon after " + GraceSeconds + "s)");
-                    }
+                    string serverIp = GetServerIp();
+                    string url = $"http://{serverIp}:{DownloadPort}/";
+                    // Hand the credentials to the only copyable surface the
+                    // game has BEFORE kicking — the kick dialog itself is not
+                    // selectable, but F1 console history survives it.
+                    string kickTok = EnsureToken(lo, hi);
+                    if (kickTok != null)
+                        SendTokenConsole(player, steamId, kickTok);
+                    player.Kick("VAC client required — reopen F1 at the main menu: "
+                        + "your steamid + access code are in the console. Download: " + url);
+                    Puts("VacIntegrity: Kicked " + player.displayName +
+                        " (no daemon after " + GraceSeconds + "s)");
                 }
+            }
+        }
+
+        // -----------------------------------------------------------------------
+        // Console handoff: the F1 console is the only copyable text surface the
+        // game gives players (chat and the kick dialog are not selectable).
+        // Echo the SteamID, access code and a ready-to-paste daemon command
+        // line there so nobody has to hand-type a 32-char token. Console
+        // history survives a kick — the player can reopen F1 at the main menu
+        // and copy everything.
+        // -----------------------------------------------------------------------
+        private void SendTokenConsole(BasePlayer player, ulong steamId, string token)
+        {
+            string serverIp = GetServerIp();
+            try
+            {
+                string[] lines =
+                {
+                    "----------------------------------------------------------",
+                    "VAC setup — select a line, then Ctrl+C to copy:",
+                    "  steamid64: " + steamId,
+                    "  access code: " + token,
+                    "  daemon command: ./vac-daemon " + serverIp + ":28084 " + steamId + " " + token,
+                    "  magic link: http://" + serverIp + ":" + DownloadPort + "/setup?t=" + token,
+                    "----------------------------------------------------------"
+                };
+                foreach (string line in lines)
+                    ConsoleNetwork.SendClientCommand(player.net.connection, "echo", new object[] { line });
+            }
+            catch (Exception ex)
+            {
+                PrintWarning("VacIntegrity: console handoff failed for " + steamId + ": " + ex.Message);
             }
         }
 
@@ -975,7 +1031,13 @@ namespace Carbon.Plugins
             player.ChatMessage("Windows: extract and run vac-setup.exe. "
                 + "Linux/Proton: extract vac-linux.zip and run ./vac-daemon (use the access code below).");
             player.ChatMessage("Your access code: " + token);
+            player.ChatMessage("Issues or feedback? https://github.com/text70/VAC/issues");
 
+            // The chat lines above cannot be copied — repeat the credentials
+            // into the F1 console, where text is selectable.
+            SendTokenConsole(player, steamId, token);
+
+            _graceWarned.Remove(steamId);
             _playerConnectTime[steamId] = DateTime.UtcNow;
             lock (_playerNames)
             {
@@ -1003,6 +1065,7 @@ namespace Carbon.Plugins
             uint hi = (uint)((steamId >> 32) & 0xFFFFFFFF);
             vac_server_unregister_client(lo, hi);
             _playerConnectTime.Remove(steamId);
+            _graceWarned.Remove(steamId);
             lock (_playerNames)
             {
                 _playerNames.Remove(steamId);

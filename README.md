@@ -256,6 +256,9 @@ Games -> Add a Non-Steam Game to My Library -> Browse -> <path-to-your>SteamLibr
 4. You should load into the world. In the private chat you'll receive a
    **VAC access code** (and a download link). The code is re-sent every time
    you connect, so reconnecting is always safe.
+5. Press **F1**: the console shows your `steamid64`, `access code` and a
+   ready-to-paste `./vac-daemon …` command — select a line and press
+   **Ctrl+C** (chat can't be copied; the console can).
 
 > **60-second grace window:** once you load in, the server expects your VAC
 > daemon to connect within 60 seconds — otherwise you are kicked (this is the
@@ -283,16 +286,17 @@ The magic launch link in chat auto-detects your OS: a Windows browser gets the
 (the `vac-daemon` binary + a preload ini with your access code baked in) —
 that variant saves you typing.
 
-Then join the server (F1 → `connect <SERVER_IP>:28015`), grab the code from
-chat, and start the daemon:
+Then join the server (F1 → `connect <SERVER_IP>:28015`), open **F1** again to
+copy your credentials from the console, and start the daemon:
 
 ```bash
 ./vac-daemon <SERVER_IP>:28084 <steamid64> <code-from-chat>
 ```
 
-- `<SERVER_IP>` — the server's IP (`28084` = daemon listener)
-- `<steamid64>` — your SteamID64
-- `<code-from-chat>` — the access code the plugin gave you in game
+- `<SERVER_IP>`, `<steamid64>`, `<code-from-chat>` — all three are printed
+  together as a paste-ready command in the F1 console on connect (and again
+  ~30 s before any grace kick, and right before the kick itself — F1 history
+  survives being kicked, so reopen the console at the main menu).
 
 If the game isn't connected yet you'll get a reject message — it clears once
 you're in the world.

@@ -497,6 +497,14 @@ avoid false positives from legal overlays.
   `{players:[{steamid,name,daemon_connected,enrolled}]}`) and
   `/vac/status.html` (auto-refreshing table, embeddable as a Carbon dashboard
   custom tab). Read-only — tokens/key material are never exposed.
+- **Copyable credentials in the F1 console** (VacIntegrity.cs
+  `SendTokenConsole`): chat and the kick dialog are not selectable, so on
+  connect, on the 30 s grace warning and right before the enforcement kick
+  the plugin echoes `steamid64`, `access code`, a paste-ready
+  `./vac-daemon <ip>:28084 <id> <token>` line and the magic link to the
+  player's console via `ConsoleNetwork.SendClientCommand(..., "echo", ...)`.
+  F1 console history survives the kick (reopen at main menu). Connect chat
+  also advertises the issues URL (github.com/text70/VAC/issues).
 - **HTTP is plain http on 28085** (no TLS) — README/links must use `http://`.
   Downloads (`/vac-daemon`, `/setup`) can reset mid-transfer while the
   container is restarting; clients just retry.
