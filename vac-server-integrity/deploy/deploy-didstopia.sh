@@ -185,7 +185,7 @@ mkdir -p /opt/vac-rustdata
 # Pass the values the inline command uses as real container env so they expand
 # inside the container (WORLDSIZE/VAC_SEED/EXTRA_ARGS/RCON_PASSWORD must be
 # -e'd; export alone on the host does nothing for podman run).
-podman run -d --name rust-server \
+podman run -d --name rust-server --workdir / \
   -e WORLDSIZE="$WORLDSIZE" \
   -e VAC_SEED="$VAC_SEED" \
   -e EXTRA_ARGS="$EXTRA_ARGS" \
