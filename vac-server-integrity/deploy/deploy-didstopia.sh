@@ -180,8 +180,20 @@ fi
 
 # --- 6. run -------------------------------------------------------------
 podman rm -f rust-server 2>/dev/null || true
-# Pre-create the mount host dir so the bind mount target exists.
+# Pre-create + own the mount host dir. If running as root, chown to the
+# podman user so a rootless conmon can traverse it (fixes
+# "[conmon:e] Failed to get working directory" on fresh hosts where an earlier
+# root run left a root-owned /opt/vac-rustdata).
 mkdir -p /opt/vac-rustdata
+if [ "$(id -u)" = "0" ] && command -v podman >/dev/null; then
+  # Use the invoking user's UID if under sudo, else root.
+  PM_USER="${SUDO_USER:-root}"
+  if [ "$PM_USER" != "root" ]; then
+    chown -R "$PM_USER" /opt/vac-rustdata 2>/dev/null || true
+  fi
+fi
+# Pre-pull so podman run doesn't race image-pull + conmon cwd creation.
+podman pull -q docker.io/didstopia/rust-server:latest >/dev/null 2>&1 || echo "  (podman pull skipped; will pull on run)"
 # Pass the values the inline command uses as real container env so they expand
 # inside the container (WORLDSIZE/VAC_SEED/EXTRA_ARGS/RCON_PASSWORD must be
 # -e'd; export alone on the host does nothing for podman run).
