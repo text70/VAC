@@ -182,15 +182,16 @@ fi
 podman rm -f rust-server 2>/dev/null || true
 # Pre-create the mount host dir so the bind mount target exists.
 mkdir -p /opt/vac-rustdata
-# Export so the inline container command ($EXTRA_ARGS, $WORLDSIZE, $VAC_SEED,
-# $RCON_PASSWORD) resolves them from the environment.
-export EXTRA_ARGS WORLDSIZE VAC_SEED RCON_PASSWORD
+# Pass the values the inline command uses as real container env so they expand
+# inside the container (WORLDSIZE/VAC_SEED/EXTRA_ARGS/RCON_PASSWORD must be
+# -e'd; export alone on the host does nothing for podman run).
 podman run -d --name rust-server \
-  -e RUST_SERVER_WORLDSIZE="$WORLDSIZE" \
-  -e RUST_SERVER_SEED="$VAC_SEED" \
+  -e WORLDSIZE="$WORLDSIZE" \
+  -e VAC_SEED="$VAC_SEED" \
+  -e EXTRA_ARGS="$EXTRA_ARGS" \
+  -e RCON_PASSWORD="$RCON_PASSWORD" \
   -e RUST_SERVER_PORT=28015 \
   -e RUST_SERVER_QUERYPORT=28016 \
-  -e RUST_RCON_PASSWORD="$RCON_PASSWORD" \
   -e VAC_PUBLIC_IP="$SERVER_IP" \
   -v /opt/vac-rustdata:/steamcmd/rust \
   -p 28015:28015/udp -p 28016:28016/tcp -p 28016:28016/udp \
