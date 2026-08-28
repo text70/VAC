@@ -107,6 +107,17 @@ script:
   line = Steam registration OK; master-list propagation takes a few minutes.
   Live rename without restart: rcon `server.hostname "…"` + `server.writecfg`.
 
+- **Carbon cpanel Plugins-tab icon overlap (upstream bug)** — marketplace
+  icons bleed onto the VacIntegrity card (no Codefling listing ⇒ no
+  thumbnail). Root cause is in Carbon
+  `AdminModule.Tabs.Plugins.cs` (~line 288): `cui.CreateClientImage` runs
+  unconditionally even when `displayVendor` is true, leaving an empty
+  alpha-0 image element that picks up freshly downloaded FileStorage
+  textures. Not fixable from VacIntegrity (plugin draws no CUI). Workaround:
+  cpanel → Configuration → "Hide Plugin Icons (Plugins tab)". Upstream
+  report pending; re-check newer Carbon productions before shipping docs
+  that reference this.
+
 ### OPEN: vac_decrypt timer failure on fresh cloud deploys
 
 Carbon logs `Timer of 60s has failed … (vac_decrypt)` for every server-local
